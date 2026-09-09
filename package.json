@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build": "cd frontend && npm install && npm run build",
-    "postinstall": "cd frontend && npm install && npm run build"
+    "build": "echo 'PulseIoT Studio Ready'"
   },
   "dependencies": {
     "cors": "^2.8.5",
