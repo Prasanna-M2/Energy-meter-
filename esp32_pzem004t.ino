@@ -15,8 +15,8 @@
 const char* ssid     = "KGB";
 const char* password = "YOUR_WIFI_PASSWORD"; // Change to your hotspot password if different
 
-// Local Telemetry Ingestion Endpoint
-const char* serverEndpoint = "http://10.165.47.187:3000/api/telemetry";
+// Live Render Cloud Ingestion Endpoint
+const char* serverEndpoint = "https://energy-meter-5jie.onrender.com/api/telemetry";
 
 unsigned long lastSendTime = 0;
 const long interval = 500; // Send telemetry every 500ms
