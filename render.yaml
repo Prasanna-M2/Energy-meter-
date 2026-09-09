@@ -1,0 +1,20 @@
+services:
+  # PulseIoT Energy Monitor - Complete Web + Real-Time Telemetry Pipeline
+  - type: web
+    name: pulseiot-energy-monitor
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && cd frontend && npm install && npm run build
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: DEMO_MODE
+        value: "false"
+      - key: MQTT_HOST
+        value: "broker.hivemq.com"
+      - key: MQTT_PORT
+        value: "1883"
