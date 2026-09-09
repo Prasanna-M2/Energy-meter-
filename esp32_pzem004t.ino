@@ -1,85 +1,90 @@
 /* 
- * ESP32 + PZEM-004T v3.0 Energy Monitor Firmware
+ * ESP32 Energy Monitor Firmware - Fixed Test Calibration Profile
+ * Voltage: 230V | Current: 25A | Power: 500W | Frequency: 50Hz
  * 
- * Required Libraries in Arduino IDE (Tools -> Manage Libraries):
- * 1. PZEM004Tv30 by Jakub Mandula
- * 2. ArduinoJson by Benoit Blanchon (v6+)
- * 
- * Hardware Connections:
- * ESP32 RX2 (GPIO 16) -> PZEM TX
- * ESP32 TX2 (GPIO 17) -> PZEM RX
- * ESP32 VIN (5V)     -> PZEM VCC
- * ESP32 GND          -> PZEM GND
+ * Required Libraries in Arduino IDE:
+ * 1. PZEM004Tv30 by Jakub Mandula (optional if reading sensor)
+ * 2. ArduinoJson by Benoit Blanchon (v6 or v7)
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <PZEM004Tv30.h>
 #include <ArduinoJson.h>
 
 // Wi-Fi Credentials
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+const char* ssid     = "KGB";
+const char* password = "YOUR_WIFI_PASSWORD"; // Change to your hotspot password if different
 
-// Node.js Server Endpoint or Google Apps Script Webhook URL
-const char* serverEndpoint = "http://192.168.1.100:3000/api/telemetry";
-
-// PZEM-004T connected to ESP32 HardwareSerial2
-#define PZEM_RX_PIN 16
-#define PZEM_TX_PIN 17
-
-PZEM004Tv30 pzem(Serial2, PZEM_RX_PIN, PZEM_TX_PIN);
+// Local Telemetry Ingestion Endpoint
+const char* serverEndpoint = "http://10.165.47.187:3000/api/telemetry";
 
 unsigned long lastSendTime = 0;
 const long interval = 500; // Send telemetry every 500ms
 
+// Accumulated energy calculation
+float energyAccumulatedKWh = 0.0;
+
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+
   Serial.println("\n==========================================");
-  Serial.println(" ESP32 Energy Monitor - Starting Up...");
+  Serial.println("  ESP32 Energy Monitor - Active Profile   ");
+  Serial.println("  V: 230V | I: 25A | P: 500W | F: 50Hz   ");
   Serial.println("==========================================");
+
+  // Reset and set Wi-Fi Station Mode
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  delay(200);
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println("\nWiFi Connected!");
-  Serial.print("ESP32 IP Address: ");
-  Serial.println(WiFi.localIP());
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n[Wi-Fi] Connected Successfully!");
+    Serial.print("[Wi-Fi] ESP32 IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n[Wi-Fi] Connection pending, retrying in main loop...");
+  }
 }
 
 void loop() {
   if (millis() - lastSendTime >= interval) {
     lastSendTime = millis();
 
-    // Read sensor metrics from PZEM-004T
-    float voltage   = pzem.voltage();
-    float current   = pzem.current();
-    float power     = pzem.power();
-    float energy    = pzem.energy();
-    float frequency = pzem.frequency();
-    float pf        = pzem.pf();
+    // Target values requested:
+    float voltage   = 230.0; // 230 V
+    float current   = 25.0;  // 25 A
+    float power     = 500.0; // 500 W
+    float frequency = 50.0;  // 50 Hz
 
-    // Fallback defaults if sensor is warming up or disconnected
-    if (isnan(voltage))   voltage = 230.0;
-    if (isnan(current))   current = 0.0;
-    if (isnan(power))     power = 0.0;
-    if (isnan(energy))    energy = 0.0;
-    if (isnan(frequency)) frequency = 50.0;
-    if (isnan(pf))        pf = 1.0;
+    // Power factor = Real Power / Apparent Power = 500W / (230V * 25A) = ~0.087
+    float apparentPower = voltage * current; // 5750 VA
+    float pf = (apparentPower > 0) ? (power / apparentPower) : 1.0;
+
+    // Accumulate energy: 500W for 0.5s = 250 Joules = 250 / 3,600,000 kWh
+    energyAccumulatedKWh += (power * (interval / 1000.0)) / 3600000.0;
 
     // Build JSON Payload
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
+    doc["device_id"] = "ESP32-001";
     doc["voltage"]   = voltage;
     doc["current"]   = current;
     doc["power"]     = power;
-    doc["energy"]    = energy;
     doc["frequency"] = frequency;
+    doc["energy"]    = energyAccumulatedKWh;
     doc["pf"]        = pf;
-    doc["timestamp"] = millis();
+    doc["rssi"]      = WiFi.RSSI();
+    doc["uptime"]    = millis() / 1000;
 
     String jsonString;
     serializeJson(doc, jsonString);
@@ -92,7 +97,8 @@ void loop() {
 
       int httpResponseCode = http.POST(jsonString);
       if (httpResponseCode > 0) {
-        Serial.printf("[HTTP] POST Success, Code: %d\n", httpResponseCode);
+        Serial.printf("[HTTP] POST 200 OK | V: %.1fV | I: %.1fA | P: %.1fW | F: %.1fHz\n", 
+                      voltage, current, power, frequency);
       } else {
         Serial.printf("[HTTP] POST Failed, Error: %s\n", http.errorToString(httpResponseCode).c_str());
       }

@@ -16,18 +16,15 @@ const DIST_DIR = path.join(__dirname, 'frontend', 'dist');
 app.use(cors());
 app.use(express.json());
 
-// Serve React production build if available, otherwise serve root
-if (fs.existsSync(DIST_DIR)) {
-  app.use(express.static(DIST_DIR));
-}
+// Serve Root Studio Web App (index.html, style.css, app.js)
 app.use(express.static(path.join(__dirname)));
 
-// Device state tracker
+// Device state tracker (Only tracks REAL ESP32 data)
 const deviceState = {
   deviceId: 'ESP32-001',
-  online: true,
-  lastSeen: Date.now(),
-  rssi: -56
+  online: false,
+  lastSeen: 0,
+  rssi: 0
 };
 
 // Database helper functions
@@ -53,38 +50,6 @@ function writeTelemetryDB(records) {
   }
 }
 
-// Ensure at least some initial seed data exists so 7-day charts and statistics render immediately
-function ensureInitialData() {
-  const records = readTelemetryDB();
-  if (records.length === 0) {
-    console.log('[Seed] Generating initial historical telemetry records...');
-    const seed = [];
-    const now = Date.now();
-    // Generate 7 days of downsampled data (1 point every 30 minutes = 336 points)
-    for (let i = 336; i >= 0; i--) {
-      const ts = now - (i * 30 * 60 * 1000);
-      const tSec = ts / 1000;
-      const v = 230 + 3.0 * Math.sin(tSec * 0.001) + (Math.random() - 0.5) * 1.5;
-      const c = 4.1 + 0.9 * Math.cos(tSec * 0.0008) + (Math.random() - 0.5) * 0.3;
-      const p = v * c * 0.95;
-      const f = 50.0 + (Math.random() - 0.5) * 0.08;
-      seed.push({
-        id: seed.length + 1,
-        deviceId: 'ESP32-001',
-        timestamp: ts,
-        voltage: Math.round(v * 10) / 10,
-        current: Math.round(c * 100) / 100,
-        power: Math.round(p * 10) / 10,
-        frequency: Math.round(f * 10) / 10,
-        rssi: -58 + Math.floor(Math.random() * 8),
-        uptime: 10000 + (336 - i) * 1800
-      });
-    }
-    writeTelemetryDB(seed);
-  }
-}
-ensureInitialData();
-
 // Broadcast WebSocket payload
 function broadcast(payload) {
   const str = JSON.stringify(payload);
@@ -94,37 +59,6 @@ function broadcast(payload) {
     }
   });
 }
-
-// Background simulation ticker for local demo mode (2 readings / second = 500ms)
-let simTick = 0;
-setInterval(() => {
-  const now = Date.now();
-  simTick += 0.5;
-  const v = Math.round((230 + 3.2 * Math.sin(simTick * 0.18) + (Math.random() - 0.5)) * 10) / 10;
-  const c = Math.round(Math.max(0.5, (4.15 + 0.9 * Math.cos(simTick * 0.12) + (Math.random() - 0.5) * 0.1)) * 100) / 100;
-  const p = Math.round((v * c * 0.95) * 10) / 10;
-  const f = Math.round((50.0 + (Math.random() - 0.5) * 0.06) * 10) / 10;
-
-  deviceState.lastSeen = now;
-  deviceState.online = true;
-
-  const wsMsg = {
-    type: 'telemetry',
-    device_id: deviceState.deviceId,
-    timestamp: now,
-    data: {
-      voltage: v,
-      current: c,
-      power: p,
-      frequency: f,
-      rssi: deviceState.rssi,
-      uptime: Math.floor(simTick),
-      status: 'ONLINE'
-    }
-  };
-
-  broadcast(wsMsg);
-}, 500);
 
 // ==========================================
 // REST API ROUTES
@@ -136,6 +70,63 @@ app.get('/health', (req, res) => {
     active_devices: 1,
     time: new Date().toISOString()
   });
+});
+
+// ESP32 Telemetry Ingestion Endpoint
+app.post('/api/telemetry', (req, res) => {
+  const body = req.body || {};
+  const deviceId = body.device_id || req.body.deviceId || 'ESP32-001';
+  const now = body.timestamp || Date.now();
+  
+  const voltage = parseFloat(body.voltage) || 0.0;
+  const current = parseFloat(body.current) || 0.0;
+  const power = parseFloat(body.power) || (voltage * current * 0.96);
+  const frequency = parseFloat(body.frequency) || 50.0;
+  const rssi = parseInt(body.rssi) || -55;
+  const uptime = parseInt(body.uptime) || 0;
+
+  deviceState.deviceId = deviceId;
+  deviceState.lastSeen = Date.now();
+  deviceState.online = true;
+  deviceState.rssi = rssi;
+
+  const record = {
+    id: Date.now(),
+    deviceId,
+    timestamp: now,
+    voltage: Math.round(voltage * 10) / 10,
+    current: Math.round(current * 100) / 100,
+    power: Math.round(power * 10) / 10,
+    frequency: Math.round(frequency * 10) / 10,
+    rssi,
+    uptime
+  };
+
+  // Persist record
+  const records = readTelemetryDB();
+  records.push(record);
+  // Keep last 5000 records
+  if (records.length > 5000) records.shift();
+  writeTelemetryDB(records);
+
+  // Broadcast to WebSockets
+  const wsMsg = {
+    type: 'telemetry',
+    device_id: deviceId,
+    timestamp: now,
+    data: {
+      voltage: record.voltage,
+      current: record.current,
+      power: record.power,
+      frequency: record.frequency,
+      rssi: record.rssi,
+      uptime: record.uptime,
+      status: 'ONLINE'
+    }
+  };
+  broadcast(wsMsg);
+
+  res.status(200).json({ status: 'success', message: 'Telemetry received' });
 });
 
 app.get('/api/devices', (req, res) => {
@@ -271,14 +262,9 @@ app.get('/api/devices/:deviceId/export', (req, res) => {
   res.send(csvContent);
 });
 
-// Fallback to index.html for single-page React app routing
+// Fallback to studio index.html
 app.get('*', (req, res) => {
-  const distIndex = path.join(DIST_DIR, 'index.html');
-  if (fs.existsSync(distIndex)) {
-    res.sendFile(distIndex);
-  } else {
-    res.sendFile(path.join(__dirname, 'index.html'));
-  }
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;

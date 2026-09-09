@@ -1,6 +1,8 @@
 /*
   ESP32 Real-Time Energy Monitor & MQTT Telemetry Publisher
   
+  Live Render Server: https://energy-meter-5jie.onrender.com/
+  
   Architecture:
   ESP32 -> Wi-Fi -> MQTT (Mosquitto) -> FastAPI Backend -> InfluxDB OSS -> React Dashboard
   
@@ -22,7 +24,7 @@
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
-const char* MQTT_SERVER   = "192.168.1.100";  // Host IP running Mosquitto / Docker
+const char* MQTT_SERVER   = "10.165.47.187";  // Host IP running Mosquitto / Docker
 const int   MQTT_PORT     = 1883;
 const char* MQTT_USERNAME = "";               // Leave empty if allow_anonymous true
 const char* MQTT_PASSWORD = "";

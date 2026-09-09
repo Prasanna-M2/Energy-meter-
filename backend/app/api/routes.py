@@ -18,6 +18,13 @@ def health_check():
         "active_devices": len(telemetry_service.devices)
     }
 
+@router.post("/api/telemetry")
+async def post_telemetry(payload: dict):
+    success = await telemetry_service.process_telemetry(payload)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid telemetry payload")
+    return {"status": "success", "message": "Telemetry received"}
+
 @router.get("/api/devices", response_model=List[DeviceStatus])
 def get_devices():
     return telemetry_service.get_all_devices()

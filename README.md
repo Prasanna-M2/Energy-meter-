@@ -1,5 +1,7 @@
 # ⚡ PulseIoT - ESP32 Real-Time Energy Monitor & Oscilloscope Pipeline
 
+**Live Deployed Server**: [https://energy-meter-5jie.onrender.com/](https://energy-meter-5jie.onrender.com/)
+
 A complete industrial-grade IoT telemetry pipeline:
 **ESP32 (C++ / Wi-Fi) → MQTT (Mosquitto) → FastAPI Backend → InfluxDB OSS (7-Day Retention) → WebSocket → React Dashboard (Vite + TypeScript + Tailwind CSS + Apache ECharts)**.
 
