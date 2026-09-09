@@ -19,7 +19,7 @@ app.use(express.json());
 // Serve Root Studio Web App (index.html, style.css, app.js)
 app.use(express.static(path.join(__dirname)));
 
-const GOOGLE_SHEET_WEBHOOK_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL || '';
+const GOOGLE_SHEET_WEBHOOK_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbxf5t53HsO86RILYOTeRcLagFd0ud0LNnVmGa5ClLZaD8CAI-qJmiaqBKaw1XeMGJH0gA/exec';
 let lastSheetLog = 0;
 
 function logToGoogleSheet(record) {
