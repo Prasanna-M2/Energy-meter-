@@ -19,6 +19,36 @@ app.use(express.json());
 // Serve Root Studio Web App (index.html, style.css, app.js)
 app.use(express.static(path.join(__dirname)));
 
+const GOOGLE_SHEET_WEBHOOK_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL || '';
+let lastSheetLog = 0;
+
+function logToGoogleSheet(record) {
+  if (!GOOGLE_SHEET_WEBHOOK_URL) return;
+  // Rate limit to once every 5 seconds so Google Apps Script doesn't throttle
+  const now = Date.now();
+  if (now - lastSheetLog < 5000) return;
+  lastSheetLog = now;
+
+  fetch(GOOGLE_SHEET_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      timestamp: new Date().toISOString(),
+      voltage: record.voltage,
+      current: record.current,
+      power: record.power,
+      energy: record.energy || 0,
+      frequency: record.frequency,
+      pf: record.pf || 1.0,
+      device_id: record.deviceId
+    })
+  }).then(r => r.text()).then(() => {
+    console.log('[Google Sheets] Telemetry row appended successfully');
+  }).catch(err => {
+    console.warn('[Google Sheets] Log error:', err.message);
+  });
+}
+
 // Device state tracker (Only tracks REAL ESP32 data)
 const deviceState = {
   deviceId: 'ESP32-001',
@@ -125,6 +155,9 @@ app.post('/api/telemetry', (req, res) => {
     }
   };
   broadcast(wsMsg);
+
+  // Asynchronously forward to Google Sheets if configured
+  logToGoogleSheet(record);
 
   res.status(200).json({ status: 'success', message: 'Telemetry received' });
 });
