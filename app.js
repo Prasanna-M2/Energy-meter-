@@ -62,6 +62,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initLiveChart();
     initHistoryChart();
     attemptWebSocketConnection();
+    fetchLatestData();
+    setInterval(fetchLatestData, 1500);
   });
 });
 
@@ -622,11 +624,25 @@ function initHistoryChart() {
 // 5. LIVE TELEMETRY DOM UPDATE
 // ----------------------------------------------------
 function pushTelemetryToUI(data) {
-  state.vRms = data.voltage;
-  state.iRms = data.current;
-  state.pWatts = data.power;
-  state.freq = data.frequency;
-  state.pf = data.pf;
+  if (!data) return;
+  const v = parseFloat(data.voltage) || 0.0;
+  const i = parseFloat(data.current) || 0.0;
+  const p = parseFloat(data.power) || 0.0;
+  const f = parseFloat(data.frequency) || 50.0;
+  const energyKWh = data.energy !== undefined ? parseFloat(data.energy) : 0.0;
+  const pf = data.pf !== undefined ? parseFloat(data.pf) : ((v * i > 0) ? Math.min(1.0, p / (v * i)) : 1.0);
+
+  state.vRms = v;
+  state.iRms = i;
+  state.pWatts = p;
+  state.freq = f;
+  state.pf = pf;
+
+  // Connection badge update
+  const b = document.getElementById('connectionBadge');
+  const t = document.getElementById('connectionText');
+  if (b) b.className = 'badge badge-success';
+  if (t) t.textContent = 'ESP32 ONLINE';
 
   // DOM elements update
   const elV = document.getElementById('valVoltage');
@@ -641,39 +657,38 @@ function pushTelemetryToUI(data) {
   const elPf = document.getElementById('valPF');
   const elPfp = document.getElementById('valPFPct');
 
-  if (elV) elV.textContent = data.voltage.toFixed(1);
-  if (elVs) elVs.textContent = data.frequency.toFixed(1);
-  if (elI) elI.textContent = data.current.toFixed(2);
+  if (elV) elV.textContent = v.toFixed(1);
+  if (elVs) elVs.textContent = f.toFixed(1);
+  if (elI) elI.textContent = i.toFixed(2);
   
-  if (data.current > state.peakCurrent) {
-    state.peakCurrent = data.current;
+  if (i > state.peakCurrent) {
+    state.peakCurrent = i;
     if (elIp) elIp.textContent = state.peakCurrent.toFixed(2);
   }
 
-  if (elP) elP.textContent = data.power.toFixed(1);
-  if (elAp) elAp.textContent = (data.voltage * data.current).toFixed(0);
-  if (elE) elE.textContent = (data.energy / 1000).toFixed(3);
-  if (elEw) elEw.textContent = data.energy.toFixed(1);
-  if (elF) elF.textContent = data.frequency.toFixed(1);
-  if (elPf) elPf.textContent = data.pf.toFixed(2);
-  if (elPfp) elPfp.textContent = Math.round(data.pf * 100);
+  if (elP) elP.textContent = p.toFixed(1);
+  if (elAp) elAp.textContent = (v * i).toFixed(0);
+  if (elE) elE.textContent = energyKWh.toFixed(3);
+  if (elEw) elEw.textContent = (energyKWh * 1000).toFixed(1);
+  if (elF) elF.textContent = f.toFixed(1);
+  if (elPf) elPf.textContent = pf.toFixed(2);
+  if (elPfp) elPfp.textContent = Math.round(pf * 100);
 
   updateScopeHud();
 
   // Chart update: Strictly retain ONLY the last 15 seconds
   if (state.liveChart && state.waveformDisplayMode === 'trend') {
-    const now = data.timestamp;
+    const now = data.timestamp || Date.now();
     const cutoff = now - (15 * 1000); // exactly 15 seconds
     const timestampStr = new Date(now).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     state.liveDataBuffer.push({
       timestamp: now,
       timeStr: timestampStr,
-      voltage: data.voltage,
-      current: data.current
+      voltage: v,
+      current: i
     });
 
-    // Drop any data older than past 15 seconds
     while (state.liveDataBuffer.length > 0 && state.liveDataBuffer[0].timestamp < cutoff) {
       state.liveDataBuffer.shift();
     }
@@ -688,10 +703,25 @@ function pushTelemetryToUI(data) {
 }
 
 // ----------------------------------------------------
-// 6. WEBSOCKET ENGINE (REAL ESP32 TELEMETRY ONLY)
+// 6. WEBSOCKET & REST POLLING ENGINE
 // ----------------------------------------------------
+async function fetchLatestData() {
+  try {
+    const res = await fetch('/api/devices/ESP32-001/latest');
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.telemetry) {
+        pushTelemetryToUI(json.telemetry);
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+}
+
 function attemptWebSocketConnection() {
-  const wsUrl = `ws://${window.location.host || 'localhost:3000'}`;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host || 'localhost:3000'}`;
   try {
     const ws = new WebSocket(wsUrl);
 
@@ -700,7 +730,7 @@ function attemptWebSocketConnection() {
       const b = document.getElementById('connectionBadge');
       const t = document.getElementById('connectionText');
       if (b) b.className = 'badge badge-success';
-      if (t) t.textContent = 'WSS LIVE (CONNECTED)';
+      if (t) t.textContent = 'ESP32 ONLINE';
     };
 
     ws.onmessage = (event) => {
@@ -708,11 +738,6 @@ function attemptWebSocketConnection() {
         const msg = JSON.parse(event.data);
         const data = msg.data || msg;
         if (data.voltage !== undefined) {
-          state.isSimulating = false; // Real hardware detected!
-          const simBadge = document.getElementById('simBadge');
-          const simText = document.getElementById('simText');
-          if (simBadge) simBadge.className = 'badge';
-          if (simText) simText.textContent = 'ESP32 HARDWARE LIVE';
           pushTelemetryToUI(data);
         }
       } catch (err) {
@@ -722,10 +747,14 @@ function attemptWebSocketConnection() {
 
     ws.onclose = () => {
       state.wsConnected = false;
-      setTimeout(attemptWebSocketConnection, 3000);
+      setTimeout(attemptWebSocketConnection, 2000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
     };
   } catch (e) {
-    console.log('Running in local mode');
+    console.warn('WebSocket connection error:', e);
   }
 }
 
