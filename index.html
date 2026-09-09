@@ -33,6 +33,12 @@
       </div>
 
       <div class="header-status">
+        <!-- Direct Google Sheet Link -->
+        <a href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="theme-toggle-btn" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:6px;" title="Open Google Sheet in new tab">
+          <span>📊</span>
+          <span>Google Sheet ↗</span>
+        </a>
+
         <!-- Theme Switcher (Light / Dark) -->
         <button class="theme-toggle-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Switch Light / Dark Theme">
           <span id="themeIcon">☀️</span>
@@ -57,6 +63,9 @@
       </button>
       <button class="tab-btn" onclick="switchTab('historyTab', this)">
         <i data-lucide="database"></i> 7-Day Storage &amp; Analytics
+      </button>
+      <button class="tab-btn" onclick="switchTab('sheetTab', this)">
+        <i data-lucide="table"></i> Google Sheets DB
       </button>
     </nav>
 
@@ -302,6 +311,35 @@
           <span class="metric-title">Voltage Range</span>
           <span class="metric-value" id="histVoltRange">---</span>
           <span class="metric-unit">VOLTS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: LIVE GOOGLE SHEET DB -->
+    <div id="sheetTab" class="tab-content">
+      <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:20px; margin-bottom:24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+          <div>
+            <h2 style="font-size:1.25rem; font-weight:700; display:flex; align-items:center; gap:8px; margin:0;">
+              <span>📊</span> Live Google Sheets Cloud Database
+            </h2>
+            <p style="font-size:0.875rem; color:var(--text-muted); margin:6px 0 0 0;">
+              Real-time telemetry readings from ESP32 automatically logged and synchronized to Google Cloud.
+            </p>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <a href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="theme-toggle-btn" style="display:inline-flex; align-items:center; gap:6px; text-decoration:none; padding:8px 16px; border-radius:8px; font-weight:700; font-size:0.875rem; border:1px solid var(--border-color);">
+              <span>Open in Google Sheets ↗</span>
+            </a>
+          </div>
+        </div>
+
+        <div style="width:100%; height:680px; border-radius:10px; overflow:hidden; border:1px solid var(--border-color); background:#0f172a;">
+          <iframe 
+            src="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?embedded=true&rm=minimal" 
+            style="width:100%; height:100%; border:none;"
+            allowfullscreen>
+          </iframe>
         </div>
       </div>
     </div>
