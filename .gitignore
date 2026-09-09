@@ -1,0 +1,34 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+frontend/node_modules/
+frontend/dist/
+
+# Python / Virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+backend/__pycache__/
+backend/app/__pycache__/
+backend/app/*/__pycache__/
+
+# Environment & Secrets
+.env
+.env.local
+*.env
+
+# Runtime data & logs
+mosquitto/data/
+mosquitto/log/
+*.log
+telemetry.json
+
+# IDE / System
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

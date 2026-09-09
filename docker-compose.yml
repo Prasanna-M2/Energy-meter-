@@ -1,0 +1,78 @@
+services:
+  # Eclipse Mosquitto MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: esp32_mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  # InfluxDB Time-Series Database (7-day retention)
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: esp32_influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
+      - DOCKER_INFLUXDB_INIT_ORG=ESP32Monitor
+      - DOCKER_INFLUXDB_INIT_BUCKET=esp32_data
+      - DOCKER_INFLUXDB_INIT_RETENTION=7d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=esp32-super-secret-admin-token-2026
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+
+  # FastAPI Backend Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: esp32_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_USERNAME=
+      - MQTT_PASSWORD=
+      - MQTT_TOPIC=devices/+/telemetry
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=esp32-super-secret-admin-token-2026
+      - INFLUX_ORG=ESP32Monitor
+      - INFLUX_BUCKET=esp32_data
+      - INFLUX_RETENTION=7d
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - CORS_ORIGINS=*
+      - DEMO_MODE=false
+    depends_on:
+      - mosquitto
+      - influxdb
+
+  # React Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: esp32_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_WS_URL=ws://localhost:8000/ws
+    depends_on:
+      - backend
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  influxdb_data:
