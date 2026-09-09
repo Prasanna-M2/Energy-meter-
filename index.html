@@ -1,18 +1,17 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PulseIoT - ESP32 Energy Monitor &amp; Live Waveform Studio</title>
+  <title>PulseIoT | ESP32 Energy Monitor</title>
   
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
   
-  <!-- Chart.js -->
+  <!-- Chart.js & Lucide Icons -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
 
   <link rel="stylesheet" href="style.css">
@@ -20,15 +19,15 @@
 <body>
 
   <div class="app-container">
-    <!-- Header -->
+    <!-- 1. HEADER -->
     <header>
       <div class="brand">
         <div class="brand-icon">
           <i data-lucide="zap"></i>
         </div>
         <div class="brand-title">
-          <h1>PulseIoT | ESP32 Energy Monitor</h1>
-          <p>Real-Time Telemetry &amp; 7-Day Oscilloscope Studio</p>
+          <h1>ESP32 Energy Monitor</h1>
+          <p>Device: <span id="headerDeviceId" style="color:var(--primary-cyan); font-weight:700;">ESP32-001</span></p>
         </div>
       </div>
 
@@ -41,278 +40,200 @@
 
         <div class="badge badge-success" id="connectionBadge">
           <span class="badge-dot"></span>
-          <span id="connectionText">WAITING FOR ESP32</span>
+          <span id="connectionText">ONLINE</span>
         </div>
         <div class="badge">
           <i data-lucide="clock" style="width:14px; height:14px; margin-right:4px;"></i>
-          <span id="liveTime">00:00:00</span>
+          <span id="liveTime">Last: 0.2s</span>
         </div>
       </div>
     </header>
 
-    <!-- Navigation Tabs -->
-    <nav class="nav-tabs">
-      <button class="tab-btn active" onclick="switchTab('liveTab', this)">
-        <i data-lucide="activity"></i> Live Telemetry &amp; Waveform
-      </button>
-      <button class="tab-btn" onclick="switchTab('historyTab', this)">
-        <i data-lucide="database"></i> 7-Day Storage &amp; Analytics
-      </button>
-    </nav>
-
-    <!-- TAB 1: LIVE TELEMETRY & WAVEFORM -->
-    <div id="liveTab" class="tab-content active">
-      <!-- Real-Time Sensor Metrics Cards -->
-      <div class="metrics-grid">
-        <!-- Voltage -->
-        <div class="metric-card voltage">
-          <div class="metric-header">
-            <span class="metric-title">Voltage</span>
-            <div class="metric-icon"><i data-lucide="zap"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="valVoltage">0.0</span>
-            <span class="metric-unit">VOLTS</span>
-          </div>
-          <div class="metric-sub">
-            <span>Nominal: 230V</span>
-            <span>Freq: <span id="valVoltageSub">0.0</span> Hz</span>
-          </div>
+    <!-- 2. LIVE MEASUREMENTS: EXACTLY FOUR CARDS -->
+    <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">
+      <!-- Voltage -->
+      <div class="metric-card voltage">
+        <div class="metric-header">
+          <span class="metric-title">VOLTAGE</span>
+          <div class="metric-icon"><i data-lucide="zap"></i></div>
         </div>
-
-        <!-- Current -->
-        <div class="metric-card current">
-          <div class="metric-header">
-            <span class="metric-title">Current</span>
-            <div class="metric-icon"><i data-lucide="activity"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="valCurrent">0.00</span>
-            <span class="metric-unit">AMPS</span>
-          </div>
-          <div class="metric-sub">
-            <span>Peak: <span id="valCurrentPeak">0.00</span> A</span>
-            <span>RMS Load</span>
-          </div>
+        <div>
+          <span class="metric-value" id="valVoltage">230.0</span>
+          <span class="metric-unit">V</span>
         </div>
-
-        <!-- Active Power -->
-        <div class="metric-card power">
-          <div class="metric-header">
-            <span class="metric-title">Active Power</span>
-            <div class="metric-icon"><i data-lucide="gauge"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="valPower">0.0</span>
-            <span class="metric-unit">WATTS</span>
-          </div>
-          <div class="metric-sub">
-            <span>Apparent: <span id="valApparentPower">0</span> VA</span>
-            <span>Load Factor</span>
-          </div>
-        </div>
-
-        <!-- Cumulative Energy -->
-        <div class="metric-card energy">
-          <div class="metric-header">
-            <span class="metric-title">Energy Consumed</span>
-            <div class="metric-icon"><i data-lucide="battery-charging"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="valEnergy">0.000</span>
-            <span class="metric-unit">kWh</span>
-          </div>
-          <div class="metric-sub">
-            <span>Session: <span id="valEnergyWh">0.0</span> Wh</span>
-            <span>7-Day Acc.</span>
-          </div>
-        </div>
-
-        <!-- Frequency -->
-        <div class="metric-card freq">
-          <div class="metric-header">
-            <span class="metric-title">Frequency</span>
-            <div class="metric-icon"><i data-lucide="radio"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="valFreq">0.0</span>
-            <span class="metric-unit">Hz</span>
-          </div>
-          <div class="metric-sub">
-            <span>Grid Stability</span>
-            <span>50.0 Hz</span>
-          </div>
-        </div>
-
-        <!-- Power Factor -->
-        <div class="metric-card pf">
-          <div class="metric-header">
-            <span class="metric-title">Power Factor</span>
-            <div class="metric-icon"><i data-lucide="sliders"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="valPF">0.00</span>
-            <span class="metric-unit">PF</span>
-          </div>
-          <div class="metric-sub">
-            <span>Efficiency: <span id="valPFPct">0</span>%</span>
-            <span>AC Grid</span>
-          </div>
+        <div class="metric-sub">
+          <span>Nominal 230 V</span>
+          <span>AC Mains</span>
         </div>
       </div>
 
-      <!-- Storage Status Bar (7-Day Retention Engine) -->
-      <div class="storage-card">
-        <div class="storage-info">
-          <span><i data-lucide="hard-drive" style="width:14px; height:14px; vertical-align:middle;"></i> 7-Day Local Retention Storage</span>
-          <span id="storageCountText">1,240 data points archived | Retention: 7 Days</span>
+      <!-- Current -->
+      <div class="metric-card current">
+        <div class="metric-header">
+          <span class="metric-title">CURRENT</span>
+          <div class="metric-icon"><i data-lucide="activity"></i></div>
         </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" id="storageProgressBar" style="width: 12%;"></div>
+        <div>
+          <span class="metric-value" id="valCurrent">4.10</span>
+          <span class="metric-unit">A</span>
+        </div>
+        <div class="metric-sub">
+          <span>RMS Measurement</span>
+          <span>Load Draw</span>
         </div>
       </div>
 
-      <!-- Real-Time Pure Sinusoidal Waveform & Oscilloscope Panel -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <i data-lucide="activity" style="color:var(--primary-cyan)"></i>
-            <h2>Real-Time Waveform &amp; Oscilloscope Studio</h2>
-            <span class="badge badge-sim" id="scopeModeBadge" style="margin-left:8px;">PURE AC SINE (50 Hz)</span>
-          </div>
-
-          <div class="toolbar-group">
-            <!-- Mode Switcher: Pure Sine Wave vs RMS Stream -->
-            <div class="btn-group">
-              <button class="btn-sm active" id="btnScopeSine" onclick="setWaveformMode('sine')">AC Sine Wave</button>
-              <button class="btn-sm" id="btnScopeTrend" onclick="setWaveformMode('trend')">RMS Trend</button>
-            </div>
-
-            <!-- Channel Selector -->
-            <div class="btn-group">
-              <button class="btn-sm active" id="btnChanDual" onclick="setScopeChannel('dual')">Dual (V &amp; I)</button>
-              <button class="btn-sm" id="btnChanV" onclick="setScopeChannel('voltage')">Voltage</button>
-              <button class="btn-sm" id="btnChanI" onclick="setScopeChannel('current')">Current</button>
-              <button class="btn-sm" id="btnChanP" onclick="setScopeChannel('power')">Power</button>
-            </div>
-
-            <!-- Cycles Selector for Sine Wave -->
-            <div class="btn-group" id="cycleBtnGroup">
-              <button class="btn-sm active" onclick="setScopeCycles(2, this)">2 Cycles</button>
-              <button class="btn-sm" onclick="setScopeCycles(4, this)">4 Cycles</button>
-              <button class="btn-sm" onclick="setScopeCycles(8, this)">8 Cycles</button>
-            </div>
-
-            <!-- Rolling Window for Trend Mode (Strictly 15s) -->
-            <div class="btn-group" id="trendWindowGroup" style="display:none;">
-              <button class="btn-sm active" onclick="setWindowTime(15, this)">15s Window</button>
-            </div>
-
-            <!-- Pause / Play -->
-            <button class="btn" id="pauseBtn" onclick="toggleWaveformPause()">
-              <i data-lucide="pause"></i> Pause
-            </button>
-
-            <!-- Export CSV -->
-            <button class="btn btn-cyan" onclick="exportDataCSV()">
-              <i data-lucide="download"></i> Export CSV
-            </button>
-          </div>
+      <!-- Active Power -->
+      <div class="metric-card power">
+        <div class="metric-header">
+          <span class="metric-title">POWER</span>
+          <div class="metric-icon"><i data-lucide="gauge"></i></div>
         </div>
-
-        <!-- Scope HUD Metrics -->
-        <div class="scope-hud">
-          <div class="hud-item">
-            <span class="hud-label">V_PEAK:</span>
-            <span class="hud-val volt-color" id="hudVpeak">0.0 V</span>
-          </div>
-          <div class="hud-item">
-            <span class="hud-label">V_PP:</span>
-            <span class="hud-val volt-color" id="hudVpp">0.0 V</span>
-          </div>
-          <div class="hud-item">
-            <span class="hud-label">I_PEAK:</span>
-            <span class="hud-val curr-color" id="hudIpeak">0.00 A</span>
-          </div>
-          <div class="hud-item">
-            <span class="hud-label">PERIOD (T):</span>
-            <span class="hud-val" id="hudPeriod">-- ms</span>
-          </div>
-          <div class="hud-item">
-            <span class="hud-label">PHASE SHIFT:</span>
-            <span class="hud-val" id="hudPhase">--</span>
-          </div>
+        <div>
+          <span class="metric-value" id="valPower">943.0</span>
+          <span class="metric-unit">W</span>
         </div>
+        <div class="metric-sub">
+          <span>Active Power</span>
+          <span>Real Load</span>
+        </div>
+      </div>
 
-        <!-- Canvas Container -->
-        <div class="chart-container" id="chartContainer">
-          <canvas id="scopeCanvas"></canvas>
-          <canvas id="liveChart" style="display:none;"></canvas>
+      <!-- Frequency -->
+      <div class="metric-card freq">
+        <div class="metric-header">
+          <span class="metric-title">FREQUENCY</span>
+          <div class="metric-icon"><i data-lucide="radio"></i></div>
+        </div>
+        <div>
+          <span class="metric-value" id="valFreq">50.0</span>
+          <span class="metric-unit">Hz</span>
+        </div>
+        <div class="metric-sub">
+          <span>Grid Stability</span>
+          <span>50.0 Hz Std</span>
         </div>
       </div>
     </div>
 
-    <!-- TAB 2: 7-DAY STORAGE & ANALYTICS -->
-    <div id="historyTab" class="tab-content">
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <i data-lucide="database" style="color:var(--accent-green)"></i>
-            <h2>Historical Telemetry Analysis &amp; Storage Retention</h2>
-          </div>
-
-          <div class="toolbar-group">
-            <div class="btn-group">
-              <button class="btn-sm" onclick="fetchHistoryRange('1d', this)">1 Day</button>
-              <button class="btn-sm" onclick="fetchHistoryRange('3d', this)">3 Days</button>
-              <button class="btn-sm active" onclick="fetchHistoryRange('7d', this)">7 Days</button>
-            </div>
-            <button class="btn btn-cyan" onclick="exportDataJSON()">
-              <i data-lucide="file-json"></i> Export JSON
-            </button>
-            <button class="btn btn-danger" onclick="clearHistoryData()">
-              <i data-lucide="trash-2"></i> Clear Database
-            </button>
-          </div>
+    <!-- 3. REAL-TIME WAVEFORM -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <i data-lucide="activity" style="color:var(--primary-cyan)"></i>
+          <h2>REAL-TIME WAVEFORM</h2>
         </div>
 
-        <div class="chart-container" style="height:400px;">
-          <canvas id="historyChart"></canvas>
+        <div class="toolbar-group">
+          <!-- Channel Selector -->
+          <div class="btn-group">
+            <button class="btn-sm active" id="btnScopeV" onclick="setWaveformChannel('voltage', this)">Voltage</button>
+            <button class="btn-sm" id="btnScopeI" onclick="setWaveformChannel('current', this)">Current</button>
+            <button class="btn-sm" id="btnScopeP" onclick="setWaveformChannel('power', this)">Power</button>
+          </div>
+
+          <!-- Time Window Selector -->
+          <div class="btn-group">
+            <button class="btn-sm active" onclick="setScopeWindow(15, this)">15s</button>
+            <button class="btn-sm" onclick="setScopeWindow(30, this)">30s</button>
+            <button class="btn-sm" onclick="setScopeWindow(60, this)">60s</button>
+          </div>
+
+          <!-- Pause / Resume -->
+          <button class="btn" id="pauseBtn" onclick="toggleWaveformPause()">
+            <i data-lucide="pause"></i> <span>Pause</span>
+          </button>
         </div>
       </div>
 
-      <!-- Historical Summary Stats -->
-      <div class="metrics-grid">
-        <div class="metric-card power">
-          <span class="metric-title">Peak Active Power (7D)</span>
-          <span class="metric-value" id="histPeakPower">---</span>
-          <span class="metric-unit">WATTS</span>
-        </div>
-        <div class="metric-card current">
-          <span class="metric-title">Average Current (7D)</span>
-          <span class="metric-value" id="histAvgCurrent">---</span>
-          <span class="metric-unit">AMPS</span>
-        </div>
-        <div class="metric-card energy">
-          <span class="metric-title">Total Energy Consumed</span>
-          <span class="metric-value" id="histTotalEnergy">---</span>
-          <span class="metric-unit">kWh</span>
-        </div>
-        <div class="metric-card voltage">
-          <span class="metric-title">Voltage Range</span>
-          <span class="metric-value" id="histVoltRange">---</span>
-          <span class="metric-unit">VOLTS</span>
-        </div>
+      <!-- Waveform Canvas Container -->
+      <div class="chart-container" style="height:320px; position:relative;">
+        <canvas id="liveWaveformChart"></canvas>
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer>
-      PulseIoT Telemetry &amp; Energy Monitor &bull; ESP32 &amp; PZEM-004T v3.0 Compatible &bull; Built with Chart.js, HTML5 Oscilloscope &amp; 7-Day Retention
+    <!-- 4. 7-DAY HISTORY -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <i data-lucide="database" style="color:var(--accent-green)"></i>
+          <h2>7-DAY HISTORY</h2>
+        </div>
+
+        <div class="toolbar-group">
+          <div class="btn-group">
+            <button class="btn-sm" onclick="loadHistoryRange('1h', this)">1H</button>
+            <button class="btn-sm" onclick="loadHistoryRange('6h', this)">6H</button>
+            <button class="btn-sm" onclick="loadHistoryRange('1d', this)">1D</button>
+            <button class="btn-sm" onclick="loadHistoryRange('3d', this)">3D</button>
+            <button class="btn-sm active" onclick="loadHistoryRange('7d', this)">7D</button>
+          </div>
+
+          <div class="btn-group">
+            <button class="btn-sm active" onclick="setHistoryField('voltage', this)">Voltage</button>
+            <button class="btn-sm" onclick="setHistoryField('current', this)">Current</button>
+            <button class="btn-sm" onclick="setHistoryField('power', this)">Power</button>
+            <button class="btn-sm" onclick="setHistoryField('frequency', this)">Frequency</button>
+          </div>
+
+          <button class="btn btn-cyan" onclick="exportHistoricalCSV()">
+            <i data-lucide="download"></i> Export CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Stats Summary Bar -->
+      <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
+        <div class="metric-card" style="padding:10px 14px;">
+          <span class="metric-title" style="font-size:10px;">CURRENT</span>
+          <span class="metric-value" id="statCurrent" style="font-size:16px;">---</span>
+        </div>
+        <div class="metric-card" style="padding:10px 14px;">
+          <span class="metric-title" style="font-size:10px;">MINIMUM</span>
+          <span class="metric-value" id="statMin" style="font-size:16px; color:var(--accent-green);">---</span>
+        </div>
+        <div class="metric-card" style="padding:10px 14px;">
+          <span class="metric-title" style="font-size:10px;">MAXIMUM</span>
+          <span class="metric-value" id="statMax" style="font-size:16px; color:var(--accent-red);">---</span>
+        </div>
+        <div class="metric-card" style="padding:10px 14px;">
+          <span class="metric-title" style="font-size:10px;">AVERAGE</span>
+          <span class="metric-value" id="statAvg" style="font-size:16px; color:var(--primary-cyan);">---</span>
+        </div>
+      </div>
+
+      <div class="chart-container" style="height:300px; position:relative;">
+        <canvas id="historyChart"></canvas>
+      </div>
+    </div>
+
+    <!-- 5. COMPACT DEVICE STATUS FOOTER -->
+    <footer style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:12px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; font-family:var(--font-mono); font-size:12px; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <i data-lucide="cpu" style="width:16px; height:16px; color:var(--primary-blue);"></i>
+        <span style="color:var(--text-muted);">DEVICE:</span>
+        <span style="font-weight:700; color:var(--text-main);" id="footerDeviceId">ESP32-001</span>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="badge-dot" id="footerDot" style="background:#00e676; width:8px; height:8px; border-radius:50%; box-shadow:0 0 8px #00e676;"></span>
+        <span style="color:var(--accent-green); font-weight:700;" id="footerStatusText">ONLINE</span>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:6px; color:var(--text-muted);">
+        <i data-lucide="wifi" style="width:14px; height:14px; color:var(--primary-cyan);"></i>
+        <span>Wi-Fi:</span>
+        <span style="font-weight:700; color:var(--text-main);" id="footerRssi">-52 dBm</span>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:6px; color:var(--text-muted);">
+        <i data-lucide="clock" style="width:14px; height:14px; color:var(--accent-orange);"></i>
+        <span>Last Data:</span>
+        <span style="font-weight:700; color:var(--text-main);" id="footerLastData">0.2 sec</span>
+      </div>
     </footer>
   </div>
 
-  <!-- Main JavaScript App Logic -->
   <script src="app.js"></script>
 </body>
 </html>
