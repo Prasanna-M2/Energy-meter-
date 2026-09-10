@@ -1,239 +1,659 @@
 /*
-  ESP32 Real-Time Energy Monitor & MQTT Telemetry Publisher
-  
-  Live Render Server: https://energy-meter-5jie.onrender.com/
-  
-  Architecture:
-  ESP32 -> Wi-Fi -> MQTT (Mosquitto) -> FastAPI Backend -> InfluxDB OSS -> React Dashboard
-  
+  ==============================================================================
+        ESP32 SMART ENERGY MONITOR - ZERO WHEN DISCONNECTED
+  ==============================================================================
+
   Features:
-  - Wi-Fi connection with non-blocking auto-reconnect
-  - MQTT connection with non-blocking auto-reconnect
-  - Configurable 500ms publishing interval (~2 updates/sec)
-  - Telemetry payload with extensible fields (V, I, P, Hz, RSSI, uptime)
-  - Serial diagnostics output
+  1. STRICT ZERO-OUT LOGIC:
+     - When the PZEM sensor or AC supply is DISCONNECTED, ALL values
+       (Voltage, Current, Power, Frequency, PF) immediately drop to EXACTLY 0.0!
+     - Sends 0.0 to Render Cloud, updates Local Dashboard to 0.0, and OLED to 0.0!
+  2. REAL PZEM-004T v3.0 MEASUREMENTS:
+     - Real-time AC Voltage (V), Current (A), Active Power (W)
+     - Real-time Total Energy (kWh), Frequency (Hz), Power Factor (PF)
+  3. U8g2 SH1106 128x64 OLED Display (Clean margins, zero static noise on edge):
+     - Page 1: Live Voltage, Current, Power, Power Factor
+     - Page 2: Total Energy (kWh), Grid Frequency (Hz), Sensor Status
+     - Page 3: Hotspot Status, Render Cloud Status, AP IP
+  4. Simultaneous Wi-Fi AP + STA Mode:
+     - STA: Connects to Hotspot ("NYX 3279") to stream to Render Cloud
+     - AP: Creates local Access Point ("ESP32-PZEM") for mobile dashboard
+  5. Live Render Cloud Streaming:
+     - Endpoint: https://energy-meter-5jie.onrender.com/api/telemetry
+
+  HARDWARE WIRING:
+  - PZEM TX   -> ESP32 GPIO 16 (Serial2 RX)
+  - PZEM RX   -> ESP32 GPIO 17 (Serial2 TX)
+  - PZEM VCC  -> ESP32 5V (VIN) [Must be 5V, NOT 3.3V!]
+  - PZEM GND  -> ESP32 GND
+  - OLED SDA  -> ESP32 GPIO 21
+  - OLED SCL  -> ESP32 GPIO 22
+  - OLED VCC  -> ESP32 3.3V or 5V
+  - OLED GND  -> ESP32 GND
+  ==============================================================================
 */
 
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <Wire.h>
+#include <U8g2lib.h>
+#include <PZEM004Tv30.h>
 
 // ==============================================================================
-// CONFIGURATION VARIABLES (Update with your credentials)
+// 1. HARDWARE PINS & MODULES
 // ==============================================================================
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
-const char* MQTT_SERVER   = "10.165.47.187";  // Host IP running Mosquitto / Docker
-const int   MQTT_PORT     = 1883;
-const char* MQTT_USERNAME = "";               // Leave empty if allow_anonymous true
-const char* MQTT_PASSWORD = "";
+// OLED I2C Pins
+#define OLED_SDA_PIN 21
+#define OLED_SCL_PIN 22
+#define OLED_I2C_ADDR 0x3C
 
-const char* DEVICE_ID     = "ESP32-001";
-const unsigned long TELEMETRY_INTERVAL_MS = 500;  // 500 ms (2 readings / second)
+// PZEM-004T Hardware Serial2 Pins
+#define PZEM_RX_PIN 16 // ESP32 RX2 -> Connects to PZEM TX
+#define PZEM_TX_PIN 17 // ESP32 TX2 -> Connects to PZEM RX
 
-// ==============================================================================
-// GLOBAL OBJECTS & STATE
-// ==============================================================================
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
+PZEM004Tv30 pzem(Serial2, PZEM_RX_PIN, PZEM_TX_PIN);
 
-char telemetryTopic[64];
-unsigned long lastPublishTime = 0;
-unsigned long lastReconnectAttempt = 0;
-
-// Setup NTP Client for accurate epoch milliseconds
-#include <time.h>
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 0;
-const int   daylightOffset_sec = 0;
+// U8g2 SH1106 Full Buffer Hardware I2C (Clean display without edge noise)
+U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(
+  U8G2_R0,
+  U8X8_PIN_NONE,
+  OLED_SCL_PIN,
+  OLED_SDA_PIN
+);
 
 // ==============================================================================
-// HARDWARE / SENSOR READING FUNCTION
-// (Replace with actual PZEM-004T / CT sensor / ADE7758 readings as applicable)
+// 2. WI-FI & CLOUD CONFIGURATION
 // ==============================================================================
-struct SensorReading {
-  float voltage;
-  float current;
-  float power;
-  float frequency;
-};
 
-SensorReading readEnergyMeter() {
-  SensorReading reading;
-  
-  // NOTE: If using PZEM-004T v3.0, replace these lines with:
-  // reading.voltage   = pzem.voltage();
-  // reading.current   = pzem.current();
-  // reading.power     = pzem.power();
-  // reading.frequency = pzem.frequency();
-  
-  // High-precision simulated physical values for bench-testing without AC load:
-  float t = millis() / 1000.0;
-  reading.voltage   = 230.0 + 2.5 * sin(t * 0.2) + (random(-5, 5) / 10.0);
-  reading.current   = 4.10 + 0.6 * cos(t * 0.15) + (random(-2, 2) / 10.0);
-  reading.power     = reading.voltage * reading.current * 0.96;
-  reading.frequency = 50.0 + (random(-3, 3) / 100.0);
-  
-  return reading;
-}
+// Mobile Hotspot to reach Internet & Render Cloud
+const char* STA_SSID     = "NYX 3279";
+const char* STA_PASSWORD = "12345678";
 
-unsigned long long getEpochMillis() {
-  time_t now;
-  time(&now);
-  if (now > 1600000000) {
-    return ((unsigned long long)now * 1000ULL) + (millis() % 1000);
+// Local ESP32 Dashboard Access Point
+const char* AP_SSID      = "ESP32-PZEM";
+const char* AP_PASSWORD  = "12345678";
+
+// Live Render Cloud Telemetry Ingestion Endpoint
+const char* SERVER_ENDPOINT = "https://energy-meter-5jie.onrender.com/api/telemetry";
+const char* DEVICE_ID       = "ESP32-001";
+
+WebServer server(80);
+
+// ==============================================================================
+// 3. MEASUREMENT VARIABLES & TIMERS (STRICT ZERO DEFAULT)
+// ==============================================================================
+
+// All values strictly initialized to 0.0
+float voltage     = 0.0f;
+float current     = 0.0f;
+float power       = 0.0f;
+float energy      = 0.0f;
+float frequency   = 0.0f;
+float pf          = 0.0f;
+
+bool pzemConnected  = false;
+bool cloudConnected = false;
+bool oledAvailable  = false;
+
+uint8_t oledPage = 0;
+const uint8_t OLED_PAGE_COUNT = 3;
+
+unsigned long lastCloudSend      = 0;
+const unsigned long CLOUD_INTERVAL = 5000; // Strictly send telemetry to Cloud every 5000ms (5.0s)
+
+unsigned long lastPZEMRead       = 0;
+const unsigned long PZEM_INTERVAL = 1000;  // Read PZEM sensor every 1000ms
+
+unsigned long lastOLEDUpdate     = 0;
+const unsigned long OLED_INTERVAL = 300;   // Refresh OLED every 300ms
+
+unsigned long lastOLEDPageChange = 0;
+const unsigned long OLED_PAGE_INTERVAL = 3500; // Rotate OLED page every 3.5s
+
+unsigned long lastWiFiCheck      = 0;
+const unsigned long WIFI_CHECK_INTERVAL = 5000;
+
+unsigned long lastSerialDebug    = 0;
+
+// ==============================================================================
+// 4. REAL PZEM-004T SENSOR ACQUISITION (ZERO-OUT ON DISCONNECT)
+// ==============================================================================
+
+void readPZEM() {
+  float v = pzem.voltage();
+  float c = pzem.current();
+  float p = pzem.power();
+  float e = pzem.energy();
+  float f = pzem.frequency();
+  float factor = pzem.pf();
+
+  // If voltage is a valid number (> 5.0V), the PZEM sensor and AC mains are connected!
+  if (!isnan(v) && v > 5.0f) {
+    voltage       = v;
+    current       = (isnan(c) || c < 0.002f) ? 0.0f : c;
+    power         = (isnan(p) || p < 0.1f) ? 0.0f : p;
+    energy        = isnan(e) ? energy : e; // Keep accumulated energy
+    frequency     = isnan(f) ? 0.0f : f;
+    pf            = (isnan(factor) || current < 0.01f || factor < 0.0f) ? 0.0f : factor;
+
+    if (!pzemConnected) {
+      Serial.println("\n[PZEM] *** REAL SENSOR CONNECTED & MEASURING AC MAINS ***");
+    }
+    pzemConnected = true;
+  } else {
+    // =========================================================================
+    // SENSOR OR AC SUPPLY DISCONNECTED: FORCE ALL METRICS TO STRICTLY 0.0!
+    // =========================================================================
+    voltage       = 0.0f;
+    current       = 0.0f;
+    power         = 0.0f;
+    frequency     = 0.0f;
+    pf            = 0.0f;
+
+    if (pzemConnected) {
+      Serial.println("\n[PZEM] SENSOR OR AC SUPPLY DISCONNECTED -> FORCING ALL METRICS TO 0");
+    }
+    pzemConnected = false;
   }
-  return millis(); // Fallback if NTP not yet synced
+}
+
+void printSerialDiagnostics() {
+  if (pzemConnected) {
+    Serial.printf("[PZEM LIVE] V: %.1f V | I: %.2f A | P: %.1f W | E: %.4f kWh | F: %.1f Hz | PF: %.2f\n",
+                  voltage, current, power, energy, frequency, pf);
+  } else {
+    Serial.println("[PZEM STATUS] SENSOR DISCONNECTED OR NO AC MAINS -> OUTPUTTING 0.0");
+  }
+}
+
+// ============================================================
+// 5. U8G2 OLED DISPLAY PAGES (CLEAN MARGINS)
+// ============================================================
+
+void oledHeader(const char* title) {
+  oled.setFont(u8g2_font_6x10_tf);
+  oled.drawStr(4, 9, title);
+  oled.drawHLine(2, 11, 124);
+}
+
+// Page 1: Live AC Measurements (V, I, P, PF)
+void drawOLEDPage1() {
+  oled.clearBuffer();
+  oledHeader("ENERGY MONITOR");
+
+  oled.setFont(u8g2_font_6x10_tf);
+  oled.setCursor(4, 24);
+  oled.printf("V : %.1f V", voltage);
+
+  oled.setCursor(4, 37);
+  oled.printf("I : %.2f A", current);
+
+  oled.setCursor(4, 50);
+  oled.printf("P : %.1f W", power);
+
+  oled.setCursor(76, 50);
+  oled.printf("PF %.2f", pf);
+
+  oled.setCursor(4, 63);
+  if (pzemConnected) {
+    oled.print("[PZEM: LIVE HARDWARE]");
+  } else {
+    oled.print("[PZEM: DISCONNECTED 0V]");
+  }
+
+  oled.sendBuffer();
+}
+
+// Page 2: Grid & Totals (Energy kWh, Frequency Hz)
+void drawOLEDPage2() {
+  oled.clearBuffer();
+  oledHeader("GRID & TOTALS");
+
+  oled.setFont(u8g2_font_6x10_tf);
+  oled.setCursor(4, 26);
+  oled.printf("Energy: %.4f kWh", energy);
+
+  oled.setCursor(4, 41);
+  oled.printf("Freq  : %.1f Hz", frequency);
+
+  oled.setCursor(4, 57);
+  oled.print("Sensor: ");
+  oled.print(pzemConnected ? "CONNECTED" : "DISCONNECTED (0)");
+
+  oled.sendBuffer();
+}
+
+// Page 3: Network & Cloud Connectivity Status
+void drawOLEDPage3() {
+  oled.clearBuffer();
+  oledHeader("NETWORK STATUS");
+
+  oled.setFont(u8g2_font_6x10_tf);
+  oled.setCursor(4, 25);
+  oled.printf("Hotspot: %s", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "OFFLINE");
+
+  oled.setCursor(4, 38);
+  oled.printf("Render : %s", cloudConnected ? "ONLINE (200)" : "CONNECTING");
+
+  oled.setCursor(4, 51);
+  oled.printf("AP IP  : 192.168.4.1");
+
+  oled.setCursor(4, 63);
+  oled.printf("Uptime : %lus", millis() / 1000);
+
+  oled.sendBuffer();
+}
+
+void updateOLED() {
+  if (!oledAvailable) return;
+
+  switch (oledPage) {
+    case 0: drawOLEDPage1(); break;
+    case 1: drawOLEDPage2(); break;
+    case 2: drawOLEDPage3(); break;
+    default: oledPage = 0; break;
+  }
 }
 
 // ==============================================================================
-// WI-FI SETUP & RECONNECTION
+// 6. RENDER CLOUD TELEMETRY TRANSMISSION (STRICT 0 WHEN OFFLINE)
 // ==============================================================================
-void setupWiFi() {
-  Serial.println();
-  Serial.print("Connecting to Wi-Fi SSID: ");
-  Serial.println(WIFI_SSID);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+void sendToRenderCloud() {
+  if (WiFi.status() != WL_CONNECTED) {
+    cloudConnected = false;
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Skip SSL certificate verification
+
+  HTTPClient http;
+  http.setConnectTimeout(4000);
+  http.setTimeout(4500);
+  http.setReuse(true); // Reuse TLS socket to prevent connection drops
+
+  if (!http.begin(client, SERVER_ENDPOINT)) {
+    cloudConnected = false;
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+
+  // Format JSON payload - Transmits exact 0.0 when sensor is disconnected!
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  StaticJsonDocument<384> doc;
+#endif
+
+  doc["device_id"] = DEVICE_ID;
+  doc["voltage"]   = voltage;
+  doc["current"]   = current;
+  doc["power"]     = power;
+  doc["frequency"] = frequency;
+  doc["energy"]    = energy;
+  doc["pf"]        = pf;
+  doc["rssi"]      = WiFi.RSSI();
+  doc["uptime"]    = millis() / 1000;
+
+  String payload;
+  serializeJson(doc, payload);
+
+  int httpCode = http.POST(payload);
+  http.end();
+
+  if (httpCode > 0 && httpCode < 400) {
+    cloudConnected = true;
+    Serial.printf("[Cloud POST 200] V: %.1fV | I: %.2fA | P: %.1fW | F: %.1fHz\n",
+                  voltage, current, power, frequency);
+  } else {
+    cloudConnected = false;
+    Serial.printf("[Cloud POST Failed] HTTP %d (Error: %s)\n", httpCode, http.errorToString(httpCode).c_str());
+  }
+}
+
+// ==============================================================================
+// 7. LOCAL MOBILE WEB DASHBOARD (http://192.168.4.1)
+// ==============================================================================
+
+const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Real PZEM Energy Monitor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+    body { background: #07111f; color: #ffffff; padding: 12px; }
+    .header { text-align: center; padding: 16px 10px; background: #111c2e; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 12px; }
+    h1 { font-size: 22px; margin-bottom: 4px; color: #38bdf8; }
+    .sub { font-size: 13px; color: #94a3b8; }
+    
+    .status-bar {
+      text-align: center; padding: 12px; border-radius: 10px; background: #111c2e;
+      border: 1px solid #1e293b; font-weight: bold; margin-bottom: 12px; font-size: 14px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; max-width: 600px; margin: auto; }
+    @media(max-width:440px) { .grid { grid-template-columns: 1fr 1fr; } }
+    
+    .card { background: #111c2e; border: 1px solid #1e293b; border-radius: 12px; padding: 16px 8px; text-align: center; }
+    .label { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .value { font-size: 28px; font-weight: bold; margin: 6px 0; color: #ffffff; }
+    .unit { color: #38bdf8; font-size: 12px; font-weight: 600; }
+    
+    .panel {
+      max-width: 600px; margin: 12px auto; background: #111c2e; border: 1px solid #1e293b; border-radius: 12px; padding: 14px;
+    }
+    .panel h2 { font-size: 13px; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
+    .panel-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
+    .panel-row:last-child { border-bottom: none; }
+    .val-text { font-weight: bold; }
+    
+    footer { text-align: center; color: #64748b; font-size: 11px; padding: 14px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>⚡ ESP32 SMART ENERGY MONITOR</h1>
+    <div class="sub">Real PZEM-004T &bull; U8G2 OLED &bull; Render Cloud</div>
+  </div>
+
+  <div id="status" class="status-bar" style="color: #f59e0b;">
+    ● CONNECTING TO SENSOR...
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Voltage</div>
+      <div class="value" id="voltage">0.0</div>
+      <div class="unit">VOLTS (V)</div>
+    </div>
+    <div class="card">
+      <div class="label">Current</div>
+      <div class="value" id="current">0.00</div>
+      <div class="unit">AMPERES (A)</div>
+    </div>
+    <div class="card">
+      <div class="label">Active Power</div>
+      <div class="value" id="power">0.0</div>
+      <div class="unit">WATTS (W)</div>
+    </div>
+    <div class="card">
+      <div class="label">Total Energy</div>
+      <div class="value" id="energy">0.0000</div>
+      <div class="unit">KILOWATT-HOURS (kWh)</div>
+    </div>
+    <div class="card">
+      <div class="label">Grid Frequency</div>
+      <div class="value" id="frequency">0.0</div>
+      <div class="unit">HERTZ (Hz)</div>
+    </div>
+    <div class="card">
+      <div class="label">Power Factor</div>
+      <div class="value" id="pf">0.00</div>
+      <div class="unit">PF (0.00 - 1.00)</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Hardware &amp; Network Status</h2>
+    <div class="panel-row">
+      <span>PZEM-004T Sensor</span>
+      <strong id="pzemStatus" class="val-text" style="color:#f59e0b;">CHECKING</strong>
+    </div>
+    <div class="panel-row">
+      <span>Hotspot ("NYX 3279")</span>
+      <strong id="wifiText" class="val-text">CHECKING...</strong>
+    </div>
+    <div class="panel-row">
+      <span>Render Cloud</span>
+      <strong id="cloudText" class="val-text">OFFLINE</strong>
+    </div>
+    <div class="panel-row">
+      <span>Wi-Fi Signal (RSSI)</span>
+      <strong id="rssiText" class="val-text">--</strong>
+    </div>
+  </div>
+
+  <div class="footer">
+    ESP32 Local Dashboard: http://192.168.4.1 &bull; Auto-refresh: 1s
+  </div>
+
+  <script>
+    async function refreshData() {
+      try {
+        const res = await fetch('/data?_=' + Date.now(), { cache: "no-store" });
+        if (!res.ok) return;
+        const d = await res.json();
+
+        document.getElementById('voltage').innerText   = Number(d.voltage).toFixed(1);
+        document.getElementById('current').innerText   = Number(d.current).toFixed(2);
+        document.getElementById('power').innerText     = Number(d.power).toFixed(1);
+        document.getElementById('energy').innerText    = Number(d.energy).toFixed(4);
+        document.getElementById('frequency').innerText = Number(d.frequency).toFixed(1);
+        document.getElementById('pf').innerText        = Number(d.pf).toFixed(2);
+
+        const status = document.getElementById('status');
+        const pzemStatus = document.getElementById('pzemStatus');
+        if (d.pzem) {
+          status.innerText   = "● PZEM-004T LIVE (MEASURING AC MAINS)";
+          status.style.color = "#22c55e";
+          pzemStatus.innerText = "CONNECTED (LIVE)";
+          pzemStatus.style.color = "#22c55e";
+        } else {
+          status.innerText   = "● SENSOR DISCONNECTED (VALUES ARE 0)";
+          status.style.color = "#ef4444";
+          pzemStatus.innerText = "DISCONNECTED (0.0 V)";
+          pzemStatus.style.color = "#ef4444";
+        }
+
+        const wifi = document.getElementById('wifiText');
+        wifi.innerText   = d.wifi ? "CONNECTED" : "DISCONNECTED";
+        wifi.style.color = d.wifi ? "#22c55e" : "#ef4444";
+
+        const cloud = document.getElementById('cloudText');
+        cloud.innerText   = d.cloud ? "ONLINE (STREAMING 0)" : "OFFLINE";
+        cloud.style.color = d.cloud ? "#22c55e" : "#ef4444";
+
+        document.getElementById('rssiText').innerText = d.wifi ? (d.rssi + " dBm") : "--";
+      } catch (e) {
+        document.getElementById('status').innerText = "● ESP32 OFFLINE";
+        document.getElementById('status').style.color = "#ef4444";
+      }
+    }
+    setInterval(refreshData, 1000);
+    window.onload = refreshData;
+  </script>
+</body>
+</html>
+)rawliteral";
+
+void handleRoot() {
+  server.send(200, "text/html", DASHBOARD_HTML);
+}
+
+void handleData() {
+  String json = "{";
+  json += "\"voltage\":" + String(voltage, 1) + ",";
+  json += "\"current\":" + String(current, 2) + ",";
+  json += "\"power\":" + String(power, 1) + ",";
+  json += "\"energy\":" + String(energy, 4) + ",";
+  json += "\"frequency\":" + String(frequency, 1) + ",";
+  json += "\"pf\":" + String(pf, 2) + ",";
+  json += "\"pzem\":" + String(pzemConnected ? "true" : "false") + ",";
+  json += "\"wifi\":" + String((WiFi.status() == WL_CONNECTED) ? "true" : "false") + ",";
+  json += "\"cloud\":" + String(cloudConnected ? "true" : "false") + ",";
+  json += "\"rssi\":" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127) + ",";
+  json += "\"uptime\":" + String(millis() / 1000);
+  json += "}";
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.send(200, "application/json", json);
+}
+
+// ==============================================================================
+// 8. HARDWARE INITIALIZATION
+// ==============================================================================
+
+void initializeOLED() {
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+  delay(100);
+
+  oled.setI2CAddress(OLED_I2C_ADDR * 2);
+  oled.begin();
+  oledAvailable = true;
+
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_ncenB12_tr);
+  oled.drawStr(12, 28, "ESP32 SMART");
+  oled.drawStr(14, 48, "MONITOR");
+  oled.sendBuffer();
+
+  Serial.println("[OLED] U8g2 SH1106 initialized on GPIO 21 (SDA) & 22 (SCL)");
+  delay(800);
+}
+
+void initializePZEM() {
+  Serial.println("[PZEM] Initializing Hardware Serial2: RX=GPIO16, TX=GPIO17, Baud=9600");
+  Serial2.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);
+  delay(150);
+  while (Serial2.available()) Serial2.read();
+}
+
+// ==============================================================================
+// 9. SETUP
+// ==============================================================================
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println("\n========================================================");
+  Serial.println("   ESP32 SMART ENERGY MONITOR - ZERO WHEN DISCONNECTED  ");
+  Serial.println("========================================================");
+
+  // 1. Initialize OLED Display First
+  initializeOLED();
+
+  // 2. Initialize PZEM Serial
+  initializePZEM();
+
+  // 3. First read and initial OLED draw (will be strictly 0 if no AC)
+  readPZEM();
+  updateOLED();
+
+  // 4. Enable Concurrent AP + STA mode
+  WiFi.mode(WIFI_AP_STA);
+  delay(100);
+
+  // 5. Start Local Mobile Access Point
+  WiFi.softAP(AP_SSID, AP_PASSWORD);
+  delay(300);
+
+  Serial.println("\n[AP] Local Access Point Started!");
+  Serial.printf("  SSID     : %s\n", AP_SSID);
+  Serial.printf("  Password : %s\n", AP_PASSWORD);
+  Serial.print("  URL      : http://");
+  Serial.println(WiFi.softAPIP());
+
+  // 6. Start Local Web Server
+  server.on("/", handleRoot);
+  server.on("/data", handleData);
+  server.begin();
+  Serial.println("[WEB] Local Server Running on port 80");
+
+  // 7. Connect to Mobile Hotspot for Cloud Streaming
+  Serial.printf("\n[STA] Connecting to Hotspot: %s\n", STA_SSID);
+  WiFi.begin(STA_SSID, STA_PASSWORD);
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
+    delay(400);
+    server.handleClient(); // Keep local dashboard responsive
+    updateOLED();          // Keep screen responsive
     Serial.print(".");
     attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.println("WiFi connected");
-    Serial.print("IP: ");
+    Serial.println("\n[STA] Hotspot Connected Successfully!");
+    Serial.print("  IP Address: ");
     Serial.println(WiFi.localIP());
-    Serial.print("RSSI: ");
-    Serial.print(WiFi.RSSI());
-    Serial.println(" dBm");
-
-    // Init and get time via NTP
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   } else {
-    Serial.println("\nWiFi connection pending, will retry in loop...");
+    Serial.println("\n[STA] Hotspot connection pending. Will keep reconnecting in loop...");
   }
+
+  unsigned long now = millis();
+  lastPZEMRead       = now;
+  lastOLEDUpdate     = now;
+  lastOLEDPageChange = now;
+  lastCloudSend      = now;
+  lastWiFiCheck      = now;
+  lastSerialDebug    = now;
+
+  Serial.println("========================================================\n");
 }
 
 // ==============================================================================
-// MQTT SETUP & RECONNECTION
+// 10. MAIN LOOP (Non-blocking Cooperative Scheduling)
 // ==============================================================================
-boolean reconnectMQTT() {
-  Serial.print("Attempting MQTT connection to ");
-  Serial.print(MQTT_SERVER);
-  Serial.print(":");
-  Serial.println(MQTT_PORT);
 
-  String clientId = String("ESP32Client-") + String(DEVICE_ID) + "-" + String(random(0xffff), HEX);
-  
-  boolean connected = false;
-  if (strlen(MQTT_USERNAME) > 0) {
-    connected = mqttClient.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD);
-  } else {
-    connected = mqttClient.connect(clientId.c_str());
-  }
-
-  if (connected) {
-    Serial.println("MQTT connected");
-    Serial.print("Publishing to topic: ");
-    Serial.println(telemetryTopic);
-  } else {
-    Serial.print("MQTT connection failed, rc=");
-    Serial.println(mqttClient.state());
-  }
-  return connected;
-}
-
-// ==============================================================================
-// SETUP
-// ==============================================================================
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
-
-  Serial.println("==================================================");
-  Serial.println("   ESP32 Real-Time Energy Monitor Firmware");
-  Serial.println("==================================================");
-
-  // Construct topic: devices/{device_id}/telemetry
-  snprintf(telemetryTopic, sizeof(telemetryTopic), "devices/%s/telemetry", DEVICE_ID);
-
-  setupWiFi();
-
-  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
-  mqttClient.setBufferSize(512);
-}
-
-// ==============================================================================
-// MAIN LOOP (Non-blocking)
-// ==============================================================================
 void loop() {
   unsigned long now = millis();
 
-  // 1. Maintain Wi-Fi
-  if (WiFi.status() != WL_CONNECTED) {
-    if (now - lastReconnectAttempt > 5000) {
-      lastReconnectAttempt = now;
-      Serial.println("Reconnecting to Wi-Fi...");
-      WiFi.reconnect();
-    }
-    return;
-  }
+  // 1. Serve Local Web Server requests
+  server.handleClient();
 
-  // 2. Maintain MQTT
-  if (!mqttClient.connected()) {
-    if (now - lastReconnectAttempt > 5000) {
-      lastReconnectAttempt = now;
-      if (reconnectMQTT()) {
-        lastReconnectAttempt = 0;
-      }
-    }
-  } else {
-    mqttClient.loop();
-  }
+  // 2. Read PZEM-004T Sensor
+  if (now - lastPZEMRead >= PZEM_INTERVAL) {
+    lastPZEMRead = now;
+    readPZEM();
 
-  // 3. Publish Telemetry every TELEMETRY_INTERVAL_MS (500 ms)
-  if (now - lastPublishTime >= TELEMETRY_INTERVAL_MS) {
-    lastPublishTime = now;
-
-    if (mqttClient.connected()) {
-      SensorReading data = readEnergyMeter();
-      int wifiRSSI = WiFi.RSSI();
-      unsigned long uptimeSec = millis() / 1000;
-
-      // Construct JSON payload
-      StaticJsonDocument<384> doc;
-      doc["device_id"] = DEVICE_ID;
-      doc["timestamp"] = getEpochMillis();
-      doc["voltage"]   = serialized(String(data.voltage, 1));
-      doc["current"]   = serialized(String(data.current, 2));
-      doc["power"]     = serialized(String(data.power, 1));
-      doc["frequency"] = serialized(String(data.frequency, 1));
-      doc["rssi"]      = wifiRSSI;
-      doc["uptime"]    = uptimeSec;
-      doc["firmware_version"] = "1.0.0";
-
-      char jsonBuffer[384];
-      serializeJson(doc, jsonBuffer);
-
-      // Publish to MQTT broker
-      boolean success = mqttClient.publish(telemetryTopic, jsonBuffer);
-
-      if (success) {
-        Serial.println("Publishing telemetry...");
-        Serial.print("Voltage: ");   Serial.println(data.voltage, 1);
-        Serial.print("Current: ");   Serial.println(data.current, 2);
-        Serial.print("Power: ");     Serial.println(data.power, 1);
-        Serial.print("Frequency: "); Serial.println(data.frequency, 1);
-      } else {
-        Serial.println("MQTT Publish failed");
-      }
+    // Print to Serial Monitor every 2 seconds
+    if (now - lastSerialDebug >= 2000) {
+      lastSerialDebug = now;
+      printSerialDiagnostics();
     }
   }
+
+  // 3. Rotate OLED Page Every 3.5s
+  if (now - lastOLEDPageChange >= OLED_PAGE_INTERVAL) {
+    lastOLEDPageChange = now;
+    oledPage = (oledPage + 1) % OLED_PAGE_COUNT;
+  }
+
+  // 4. Refresh OLED Display Every 300ms
+  if (now - lastOLEDUpdate >= OLED_INTERVAL) {
+    lastOLEDUpdate = now;
+    updateOLED();
+  }
+
+  // 5. Send Telemetry directly to Render Cloud Every 5.0 seconds
+  // (Sends 0.0 when sensor or supply is disconnected so Render & Google Sheets show 0!)
+  if (now - lastCloudSend >= CLOUD_INTERVAL) {
+    lastCloudSend = now;
+    sendToRenderCloud();
+  }
+
+  // 6. Maintain Hotspot Wi-Fi connection
+  if (now - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
+    lastWiFiCheck = now;
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("[Wi-Fi] Disconnected from Hotspot. Reconnecting cleanly...");
+      WiFi.disconnect();
+      delay(100);
+      WiFi.begin(STA_SSID, STA_PASSWORD);
+    }
+  }
+
+  // Yield to RTOS background tasks
+  delay(1);
 }

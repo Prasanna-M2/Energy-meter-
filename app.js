@@ -623,14 +623,18 @@ function initHistoryChart() {
 // ----------------------------------------------------
 // 5. LIVE TELEMETRY DOM UPDATE
 // ----------------------------------------------------
+// ----------------------------------------------------
+// 5. LIVE TELEMETRY DOM UPDATE (ZERO ON DISCONNECT)
+// ----------------------------------------------------
 function pushTelemetryToUI(data) {
   if (!data) return;
-  const v = parseFloat(data.voltage) || 0.0;
-  const i = parseFloat(data.current) || 0.0;
-  const p = parseFloat(data.power) || 0.0;
-  const f = parseFloat(data.frequency) || 50.0;
-  const energyKWh = data.energy !== undefined ? parseFloat(data.energy) : 0.0;
-  const pf = data.pf !== undefined ? parseFloat(data.pf) : ((v * i > 0) ? Math.min(1.0, p / (v * i)) : 1.0);
+  const v = (data.voltage !== undefined && !isNaN(parseFloat(data.voltage))) ? parseFloat(data.voltage) : 0.0;
+  const i = (data.current !== undefined && !isNaN(parseFloat(data.current))) ? parseFloat(data.current) : 0.0;
+  const p = (data.power !== undefined && !isNaN(parseFloat(data.power))) ? parseFloat(data.power) : 0.0;
+  const f = (data.frequency !== undefined && !isNaN(parseFloat(data.frequency))) ? parseFloat(data.frequency) : 0.0;
+  const energyKWh = (data.energy !== undefined && !isNaN(parseFloat(data.energy))) ? parseFloat(data.energy) : 0.0;
+  const pf = (data.pf !== undefined && !isNaN(parseFloat(data.pf))) ? parseFloat(data.pf) : 0.0;
+  const statusStr = data.status || (v > 5.0 ? 'ONLINE' : 'DISCONNECTED');
 
   state.vRms = v;
   state.iRms = i;
@@ -641,8 +645,21 @@ function pushTelemetryToUI(data) {
   // Connection badge update
   const b = document.getElementById('connectionBadge');
   const t = document.getElementById('connectionText');
-  if (b) b.className = 'badge badge-success';
-  if (t) t.textContent = 'ESP32 ONLINE';
+  if (b && t) {
+    if (statusStr === 'OFFLINE') {
+      b.className = 'badge badge-danger';
+      b.style.backgroundColor = '#ef4444';
+      t.textContent = 'SUPPLY / ESP32 OFFLINE';
+    } else if (v <= 5.0) {
+      b.className = 'badge badge-warning';
+      b.style.backgroundColor = '#f59e0b';
+      t.textContent = 'SENSOR DISCONNECTED (0V)';
+    } else {
+      b.className = 'badge badge-success';
+      b.style.backgroundColor = '#22c55e';
+      t.textContent = 'ESP32 ONLINE';
+    }
+  }
 
   // DOM elements update
   const elV = document.getElementById('valVoltage');
@@ -663,8 +680,8 @@ function pushTelemetryToUI(data) {
   
   if (i > state.peakCurrent) {
     state.peakCurrent = i;
-    if (elIp) elIp.textContent = state.peakCurrent.toFixed(2);
   }
+  if (elIp) elIp.textContent = state.peakCurrent.toFixed(2);
 
   if (elP) elP.textContent = p.toFixed(1);
   if (elAp) elAp.textContent = (v * i).toFixed(0);
@@ -699,7 +716,10 @@ function pushTelemetryToUI(data) {
     state.liveChart.update('none');
   }
 
-  saveTelemetryRecord(data);
+  // Only persist to local IndexedDB if real non-zero measurements exist
+  if (v > 5.0) {
+    saveTelemetryRecord(data);
+  }
 }
 
 // ----------------------------------------------------
@@ -710,12 +730,33 @@ async function fetchLatestData() {
     const res = await fetch('/api/devices/ESP32-001/latest');
     if (res.ok) {
       const json = await res.json();
-      if (json && json.telemetry) {
-        pushTelemetryToUI(json.telemetry);
+      if (json) {
+        if (json.status === 'OFFLINE' || (json.last_seen_seconds_ago !== undefined && json.last_seen_seconds_ago > 5)) {
+          // Device is offline: Strictly push 0 to UI
+          pushTelemetryToUI({
+            voltage: 0.0,
+            current: 0.0,
+            power: 0.0,
+            frequency: 0.0,
+            energy: (json.telemetry && json.telemetry.energy) || 0.0,
+            pf: 0.0,
+            status: 'OFFLINE'
+          });
+        } else if (json.telemetry) {
+          pushTelemetryToUI(json.telemetry);
+        }
       }
     }
   } catch (err) {
-    // ignore
+    // If backend unreachable, force offline 0
+    pushTelemetryToUI({
+      voltage: 0.0,
+      current: 0.0,
+      power: 0.0,
+      frequency: 0.0,
+      pf: 0.0,
+      status: 'OFFLINE'
+    });
   }
 }
 
@@ -727,17 +768,13 @@ function attemptWebSocketConnection() {
 
     ws.onopen = () => {
       state.wsConnected = true;
-      const b = document.getElementById('connectionBadge');
-      const t = document.getElementById('connectionText');
-      if (b) b.className = 'badge badge-success';
-      if (t) t.textContent = 'ESP32 ONLINE';
     };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
         const data = msg.data || msg;
-        if (data.voltage !== undefined) {
+        if (data && (data.voltage !== undefined || data.status !== undefined)) {
           pushTelemetryToUI(data);
         }
       } catch (err) {

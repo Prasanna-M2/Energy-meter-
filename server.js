@@ -20,34 +20,56 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 const GOOGLE_SHEET_WEBHOOK_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbxf5t53HsO86RILYOTeRcLagFd0ud0LNnVmGa5ClLZaD8CAI-qJmiaqBKaw1XeMGJH0gA/exec';
-let lastSheetLog = 0;
 
-function logToGoogleSheet(record) {
+let latestTelemetryForSheet = null;
+
+function queueTelemetryForSheet(record) {
+  latestTelemetryForSheet = record;
+}
+
+// STRICT 5-SECOND GOOGLE SHEETS LOGGER
+// Always fires every 5000ms. If ESP32 or supply is disconnected, logs 0.0 values!
+setInterval(() => {
   if (!GOOGLE_SHEET_WEBHOOK_URL) return;
-  // Rate limit to once every 5 seconds so Google Apps Script doesn't throttle
+
   const now = Date.now();
-  if (now - lastSheetLog < 5000) return;
-  lastSheetLog = now;
+  const elapsed = (now - deviceState.lastSeen) / 1000;
+  const isOnline = deviceState.lastSeen > 0 && elapsed < 8; // 8s window for 5s sends
+
+  let recordToLog;
+  if (!isOnline || !latestTelemetryForSheet) {
+    recordToLog = {
+      voltage: 0.0,
+      current: 0.0,
+      power: 0.0,
+      energy: latestTelemetryForSheet ? (latestTelemetryForSheet.energy || 0) : 0,
+      frequency: 0.0,
+      pf: 0.0,
+      deviceId: deviceState.deviceId || 'ESP32-001'
+    };
+  } else {
+    recordToLog = latestTelemetryForSheet;
+  }
 
   fetch(GOOGLE_SHEET_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       timestamp: new Date().toISOString(),
-      voltage: record.voltage,
-      current: record.current,
-      power: record.power,
-      energy: record.energy || 0,
-      frequency: record.frequency,
-      pf: record.pf || 1.0,
-      device_id: record.deviceId
+      voltage: recordToLog.voltage,
+      current: recordToLog.current,
+      power: recordToLog.power,
+      energy: recordToLog.energy || 0,
+      frequency: recordToLog.frequency,
+      pf: recordToLog.pf || 0.0,
+      device_id: recordToLog.deviceId || 'ESP32-001'
     })
   }).then(r => r.text()).then(() => {
-    console.log('[Google Sheets] Telemetry row appended successfully');
+    console.log('[Google Sheets] Telemetry logged (exact 5s interval):', recordToLog.voltage + 'V, ' + recordToLog.current + 'A, ' + recordToLog.power + 'W');
   }).catch(err => {
     console.warn('[Google Sheets] Log error:', err.message);
   });
-}
+}, 5000);
 
 // Device state tracker (Only tracks REAL ESP32 data)
 const deviceState = {
@@ -108,10 +130,13 @@ app.post('/api/telemetry', (req, res) => {
   const deviceId = body.device_id || req.body.deviceId || 'ESP32-001';
   const now = body.timestamp || Date.now();
   
-  const voltage = parseFloat(body.voltage) || 0.0;
-  const current = parseFloat(body.current) || 0.0;
-  const power = parseFloat(body.power) || (voltage * current * 0.96);
-  const frequency = parseFloat(body.frequency) || 50.0;
+  // Parse incoming values safely without falling back to non-zero defaults
+  const voltage = (typeof body.voltage !== 'undefined' && !isNaN(parseFloat(body.voltage))) ? parseFloat(body.voltage) : 0.0;
+  const current = (typeof body.current !== 'undefined' && !isNaN(parseFloat(body.current))) ? parseFloat(body.current) : 0.0;
+  const power = (typeof body.power !== 'undefined' && !isNaN(parseFloat(body.power))) ? parseFloat(body.power) : 0.0;
+  const frequency = (typeof body.frequency !== 'undefined' && !isNaN(parseFloat(body.frequency))) ? parseFloat(body.frequency) : 0.0;
+  const energy = (typeof body.energy !== 'undefined' && !isNaN(parseFloat(body.energy))) ? parseFloat(body.energy) : 0.0;
+  const pf = (typeof body.pf !== 'undefined' && !isNaN(parseFloat(body.pf))) ? parseFloat(body.pf) : 0.0;
   const rssi = parseInt(body.rssi) || -55;
   const uptime = parseInt(body.uptime) || 0;
 
@@ -119,6 +144,8 @@ app.post('/api/telemetry', (req, res) => {
   deviceState.lastSeen = Date.now();
   deviceState.online = true;
   deviceState.rssi = rssi;
+
+  const isSensorConnected = voltage > 5.0;
 
   const record = {
     id: Date.now(),
@@ -128,8 +155,11 @@ app.post('/api/telemetry', (req, res) => {
     current: Math.round(current * 100) / 100,
     power: Math.round(power * 10) / 10,
     frequency: Math.round(frequency * 10) / 10,
+    energy: Math.round(energy * 10000) / 10000,
+    pf: Math.round(pf * 100) / 100,
     rssi,
-    uptime
+    uptime,
+    status: isSensorConnected ? 'ONLINE' : 'DISCONNECTED (0V)'
   };
 
   // Persist record
@@ -149,22 +179,48 @@ app.post('/api/telemetry', (req, res) => {
       current: record.current,
       power: record.power,
       frequency: record.frequency,
+      energy: record.energy,
+      pf: record.pf,
       rssi: record.rssi,
       uptime: record.uptime,
-      status: 'ONLINE'
+      status: record.status
     }
   };
   broadcast(wsMsg);
 
-  // Asynchronously forward to Google Sheets if configured
-  logToGoogleSheet(record);
+  // Queue for exact 5-second Google Sheets scheduler
+  queueTelemetryForSheet(record);
 
   res.status(200).json({ status: 'success', message: 'Telemetry received' });
 });
 
+// Watchdog: If no telemetry received for > 5 seconds, broadcast OFFLINE zero metrics
+setInterval(() => {
+  const elapsed = (Date.now() - deviceState.lastSeen) / 1000;
+  if (deviceState.lastSeen > 0 && elapsed >= 5 && deviceState.online) {
+    deviceState.online = false;
+    broadcast({
+      type: 'telemetry',
+      device_id: deviceState.deviceId,
+      timestamp: Date.now(),
+      data: {
+        voltage: 0.0,
+        current: 0.0,
+        power: 0.0,
+        frequency: 0.0,
+        energy: 0.0,
+        pf: 0.0,
+        rssi: -127,
+        uptime: 0,
+        status: 'OFFLINE'
+      }
+    });
+  }
+}, 1000);
+
 app.get('/api/devices', (req, res) => {
   const elapsed = (Date.now() - deviceState.lastSeen) / 1000;
-  const status = elapsed < 5 ? 'ONLINE' : elapsed <= 15 ? 'WARNING' : 'OFFLINE';
+  const status = (deviceState.lastSeen === 0 || elapsed > 15) ? 'OFFLINE' : (elapsed > 5 ? 'WARNING' : 'ONLINE');
   res.json([
     {
       device_id: deviceState.deviceId,
@@ -181,11 +237,36 @@ app.get('/api/devices/:deviceId/latest', (req, res) => {
   const records = readTelemetryDB();
   const latest = records.length > 0 ? records[records.length - 1] : null;
   const elapsed = (Date.now() - deviceState.lastSeen) / 1000;
+  const isOnline = deviceState.lastSeen > 0 && elapsed < 5;
+  const isWarning = elapsed >= 5 && elapsed <= 15;
+  const status = isOnline ? 'ONLINE' : (isWarning ? 'WARNING' : 'OFFLINE');
+
+  // STRICT REQUIREMENT: When supply or device is disconnected (offline), return 0.0!
+  let telemetryToSend;
+  if (!isOnline) {
+    telemetryToSend = {
+      id: Date.now(),
+      deviceId: req.params.deviceId,
+      timestamp: Date.now(),
+      voltage: 0.0,
+      current: 0.0,
+      power: 0.0,
+      frequency: 0.0,
+      energy: latest ? (latest.energy || 0.0) : 0.0,
+      pf: 0.0,
+      rssi: -127,
+      uptime: 0,
+      status: 'OFFLINE'
+    };
+  } else {
+    telemetryToSend = latest;
+  }
+
   res.json({
     device_id: req.params.deviceId,
-    status: elapsed < 5 ? 'ONLINE' : elapsed <= 15 ? 'WARNING' : 'OFFLINE',
+    status,
     last_seen_seconds_ago: Math.round(elapsed * 10) / 10,
-    telemetry: latest
+    telemetry: telemetryToSend
   });
 });
 
