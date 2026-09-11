@@ -89,7 +89,7 @@ const char* AP_PASSWORD  = "12345678";
 
 // Telemetry Ingestion Endpoints
 const char* SERVER_ENDPOINT         = "https://energy-meter-5jie.onrender.com/api/telemetry";
-const char* GOOGLE_SHEETS_ENDPOINT  = "https://script.google.com/macros/s/AKfycbxf5t53HsO86RILYOTeRcLagFd0ud0LNnVmGa5ClLZaD8CAI-qJmiaqBKaw1XeMGJH0gA/exec";
+const char* GOOGLE_SHEETS_ENDPOINT  = "https://script.google.com/macros/s/AKfycbzIh_Xz9nYntkk6mwHR-G90nswS5L8UPFmxbCdUzJ1zzZEi32b6Jd_mr_XK79uoD4ZOsA/exec";
 const char* DEVICE_ID               = "ESP32-001";
 
 #define ENABLE_DIRECT_GOOGLE_SHEETS true
