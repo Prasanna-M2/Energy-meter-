@@ -1009,10 +1009,22 @@ async function fetchSheetAnalyticsData() {
       if (elPf) elPf.textContent = (json.avg_pf || 0.0).toFixed(2);
       if (elP) elP.textContent = (json.peak_power_w || 0.0).toFixed(1);
 
+      const statusBadge = document.getElementById('sheetStatusBadge');
+      if (statusBadge) {
+        if (json.webhook_configured) {
+          statusBadge.textContent = 'CONNECTED';
+          statusBadge.className = 'badge badge-success';
+        } else {
+          statusBadge.textContent = 'NOT CONFIGURED';
+          statusBadge.className = 'badge badge-warning';
+        }
+      }
+
       if (!state.sheetChart) {
         initSheetAnalyticsChart();
       }
       renderSheetAnalyticsChart();
+      renderSheetTable(state.sheetDataCache);
     }
   } catch (err) {
     console.warn('Error fetching Google Sheets analytics:', err);
@@ -1042,3 +1054,226 @@ function renderSheetAnalyticsChart() {
   state.sheetChart.data.datasets[0].backgroundColor = cfg.bg;
   state.sheetChart.update('none');
 }
+
+// ----------------------------------------------------
+// 10. LIVE GOOGLE SHEETS TABLE & SYNC CONTROLLER
+// ----------------------------------------------------
+function renderSheetTable(records) {
+  const tbody = document.getElementById('sheetTableBody');
+  if (!tbody) return;
+
+  if (!records || records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:24px; text-align:center; color:var(--text-muted);">No telemetry records logged yet. Click "Log Snapshot Now" or power on the ESP32.</td></tr>';
+    return;
+  }
+
+  // Show latest 100 rows in reverse chronological order
+  const displayRows = records.slice(-100).reverse();
+  let html = '';
+
+  displayRows.forEach(r => {
+    const isOnline = (r.voltage > 5.0 && (!r.status || !r.status.includes('OFFLINE') && !r.status.includes('DISCONNECTED')));
+    const statusClass = isOnline ? 'badge-success' : 'badge-danger';
+    const statusText = r.status || (isOnline ? 'ONLINE' : 'DISCONNECTED');
+    const timeDisplay = r.iso ? new Date(r.iso).toLocaleString() : (r.timestamp ? new Date(r.timestamp).toLocaleString() : '--');
+
+    html += `
+      <tr style="border-bottom:1px solid var(--border-color); transition:background 0.15s ease;" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background='transparent'">
+        <td style="padding:8px 14px; color:var(--text-muted);">${timeDisplay}</td>
+        <td style="padding:8px 14px; font-weight:600; color:var(--text-main);">${r.device_id || r.deviceId || 'ESP32-001'}</td>
+        <td style="padding:8px 14px; color:#ff9800; font-weight:600;">${Number(r.voltage || 0).toFixed(1)}</td>
+        <td style="padding:8px 14px; color:#00f2fe; font-weight:600;">${Number(r.current || 0).toFixed(2)}</td>
+        <td style="padding:8px 14px; color:#00e676; font-weight:700;">${Number(r.power || 0).toFixed(1)}</td>
+        <td style="padding:8px 14px; color:#38bdf8;">${Number(r.energy || 0).toFixed(4)}</td>
+        <td style="padding:8px 14px; color:#a855f7;">${Number(r.frequency || 0).toFixed(1)}</td>
+        <td style="padding:8px 14px; color:var(--text-muted);">${Number(r.pf || 0).toFixed(2)}</td>
+        <td style="padding:8px 14px;"><span class="badge ${statusClass}" style="font-size:0.7rem;">${statusText}</span></td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function filterSheetTable() {
+  const query = (document.getElementById('sheetTableSearch')?.value || '').toLowerCase();
+  if (!query) {
+    renderSheetTable(state.sheetDataCache);
+    return;
+  }
+
+  const filtered = state.sheetDataCache.filter(r => {
+    const text = `${r.device_id || ''} ${r.status || ''} ${r.voltage || ''} ${r.power || ''} ${r.iso || ''} ${new Date(r.timestamp).toLocaleString()}`.toLowerCase();
+    return text.includes(query);
+  });
+
+  renderSheetTable(filtered);
+}
+
+function exportSheetTableCSV() {
+  const rows = state.sheetDataCache;
+  if (!rows || rows.length === 0) {
+    alert('No Google Sheets records available to export.');
+    return;
+  }
+
+  let csv = 'Timestamp,Device_ID,Voltage_V,Current_A,Power_W,Energy_kWh,Frequency_Hz,Power_Factor,Status\n';
+  rows.forEach(r => {
+    const ts = r.iso || new Date(r.timestamp).toISOString();
+    csv += `"${ts}","${r.device_id || 'ESP32-001'}",${r.voltage || 0},${r.current || 0},${r.power || 0},${r.energy || 0},${r.frequency || 50},${r.pf || 0},"${r.status || 'ONLINE'}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `Google_Sheets_Telemetry_${Date.now()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// Bi-directional sync directly from Google Sheet
+async function syncGoogleSheetsData() {
+  const badge = document.getElementById('sheetSyncBadge');
+  if (badge) badge.textContent = 'Syncing...';
+
+  try {
+    const res = await fetch('/api/sheets/sync');
+    const json = await res.json();
+
+    if (json.status === 'success' && json.records && json.records.length > 0) {
+      state.sheetDataCache = json.records.map(r => ({
+        timestamp: new Date(r.timestamp).getTime() || Date.now(),
+        time: new Date(r.timestamp).toLocaleTimeString([], { hour12: false }),
+        iso: r.timestamp,
+        device_id: r.device_id,
+        voltage: r.voltage,
+        current: r.current,
+        power: r.power,
+        energy: r.energy,
+        frequency: r.frequency,
+        pf: r.pf,
+        status: r.status
+      }));
+
+      renderSheetAnalyticsChart();
+      renderSheetTable(state.sheetDataCache);
+
+      const elTot = document.getElementById('sheetTotalRecords');
+      if (elTot) elTot.textContent = (json.total_rows || state.sheetDataCache.length).toLocaleString();
+      if (badge) badge.textContent = 'Synced from Sheet';
+
+      alert(`Successfully synchronized ${json.records.length} records directly from Google Sheets!`);
+    } else {
+      if (badge) badge.textContent = 'No Sheet Records';
+      alert(json.message || 'No records returned from Google Sheet.');
+    }
+  } catch (err) {
+    if (badge) badge.textContent = 'Sync Failed';
+    alert('Failed to synchronize with Google Sheet: ' + err.message);
+  }
+}
+
+// Log manual snapshot to Google Sheets
+async function logGoogleSheetsSnapshot() {
+  try {
+    const res = await fetch('/api/sheets/log-now', { method: 'POST' });
+    const json = await res.json();
+    if (json.status === 'success') {
+      alert('Snapshot successfully logged to Google Sheet!');
+      fetchSheetAnalyticsData();
+    } else {
+      alert('Error logging to Google Sheet: ' + (json.message || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Log snapshot failed: ' + err.message);
+  }
+}
+
+// Webhook & Spreadsheet Configuration Modal
+async function toggleSheetConfigPanel() {
+  const panel = document.getElementById('sheetConfigPanel');
+  if (!panel) return;
+
+  const isHidden = (panel.style.display === 'none' || panel.style.display === '');
+  panel.style.display = isHidden ? 'block' : 'none';
+
+  if (isHidden) {
+    try {
+      const res = await fetch('/api/sheets/config');
+      if (res.ok) {
+        const json = await res.json();
+        const inputWebhook = document.getElementById('cfgWebhookUrl');
+        const inputEmbed = document.getElementById('cfgEmbedUrl');
+        if (inputWebhook && json.webhook_url) inputWebhook.value = json.webhook_url;
+        if (inputEmbed && json.embed_url) inputEmbed.value = json.embed_url;
+      }
+    } catch (_) {}
+  }
+}
+
+async function saveGoogleSheetsConfig() {
+  const webhook_url = document.getElementById('cfgWebhookUrl')?.value.trim();
+  const embed_url = document.getElementById('cfgEmbedUrl')?.value.trim();
+
+  try {
+    const res = await fetch('/api/sheets/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook_url, embed_url })
+    });
+    const json = await res.json();
+
+    if (json.status === 'success') {
+      const iframe = document.getElementById('googleSheetFrame');
+      const extLink = document.getElementById('sheetExternalLink');
+      if (iframe && embed_url) iframe.src = embed_url.replace('/edit?usp=sharing', '/edit?embedded=true&rm=minimal');
+      if (extLink && embed_url) extLink.href = embed_url;
+
+      alert('Configuration saved successfully!');
+    } else {
+      alert('Failed to save configuration.');
+    }
+  } catch (e) {
+    alert('Save error: ' + e.message);
+  }
+}
+
+async function testGoogleSheetsWebhook() {
+  const webhook_url = document.getElementById('cfgWebhookUrl')?.value.trim();
+  const resDiv = document.getElementById('cfgTestResult');
+  if (resDiv) resDiv.textContent = 'Testing webhook ping...';
+
+  try {
+    const res = await fetch('/api/sheets/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook_url })
+    });
+    const json = await res.json();
+
+    if (json.status === 'success') {
+      if (resDiv) {
+        resDiv.innerHTML = `<span style="color:var(--accent-green)">✓ Connected! Latency: ${json.latency_ms}ms (HTTP ${json.http_status})</span>`;
+      }
+    } else {
+      if (resDiv) {
+        resDiv.innerHTML = `<span style="color:var(--accent-red)">✗ Failed: ${json.message || 'Error'}</span>`;
+      }
+    }
+  } catch (e) {
+    if (resDiv) {
+      resDiv.innerHTML = `<span style="color:var(--accent-red)">✗ Error: ${e.message}</span>`;
+    }
+  }
+}
+
+function reloadGoogleSheetIframe() {
+  const iframe = document.getElementById('googleSheetFrame');
+  if (iframe) {
+    const src = iframe.src;
+    iframe.src = '';
+    setTimeout(() => { iframe.src = src; }, 100);
+  }
+}
+

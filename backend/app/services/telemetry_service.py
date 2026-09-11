@@ -48,6 +48,11 @@ class TelemetryService:
             power = float(raw_data.get("power", 0.0))
             frequency = float(raw_data.get("frequency", 50.0))
 
+            pf_raw = raw_data.get("power_factor") if raw_data.get("power_factor") is not None else raw_data.get("pf")
+            energy_raw = raw_data.get("energy") if raw_data.get("energy") is not None else raw_data.get("kwh")
+            pf_val = float(pf_raw) if pf_raw is not None else None
+            energy_val = float(energy_raw) if energy_raw is not None else None
+
             payload = TelemetryPayload(
                 device_id=device_id,
                 timestamp=ts,
@@ -57,8 +62,8 @@ class TelemetryService:
                 frequency=frequency,
                 rssi=raw_data.get("rssi"),
                 uptime=raw_data.get("uptime"),
-                power_factor=raw_data.get("power_factor"),
-                energy=raw_data.get("energy"),
+                power_factor=pf_val,
+                energy=energy_val,
                 temperature=raw_data.get("temperature"),
                 battery=raw_data.get("battery"),
                 firmware_version=raw_data.get("firmware_version", "1.0.0")
@@ -84,6 +89,9 @@ class TelemetryService:
                     "current": round(current, 2),
                     "power": round(power, 2),
                     "frequency": round(frequency, 2),
+                    "energy": round(energy_val, 4) if energy_val is not None else 0.0,
+                    "pf": round(pf_val, 2) if pf_val is not None else 0.0,
+                    "power_factor": round(pf_val, 2) if pf_val is not None else 0.0,
                     "rssi": payload.rssi,
                     "uptime": payload.uptime,
                     "status": self.get_device_status(device_id)

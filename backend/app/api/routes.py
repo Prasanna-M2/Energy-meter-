@@ -46,7 +46,7 @@ def get_device_history(
     if range.lower() not in valid_ranges:
         range = "7d"
 
-    valid_fields = ["voltage", "current", "power", "frequency"]
+    valid_fields = ["voltage", "current", "power", "frequency", "energy", "power_factor", "pf"]
     if field.lower() not in valid_fields:
         field = "voltage"
 

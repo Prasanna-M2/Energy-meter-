@@ -19,4 +19,4 @@ services:
       - key: MQTT_PORT
         value: "1883"
       - key: GOOGLE_SHEET_WEBHOOK_URL
-        value: "https://script.google.com/macros/s/AKfycbxf5t53HsO86RILYOTeRcLagFd0ud0LNnVmGa5ClLZaD8CAI-qJmiaqBKaw1XeMGJH0gA/exec"
+        value: "https://script.google.com/macros/s/AKfycbyUprMQAtXyhPp43cYUGtf33of9mg7Gdc_koGyihqmHNOH8hz7eZ89R0nkizpO9gSivjw/exec"

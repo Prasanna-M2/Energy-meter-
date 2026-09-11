@@ -317,7 +317,7 @@
           </div>
           <div class="metric-sub">
             <span>Cumulative Total</span>
-            <span>Cloud Synced</span>
+            <span id="sheetSyncBadge" style="color:var(--primary-cyan)">Cloud Synced</span>
           </div>
         </div>
 
@@ -361,8 +361,60 @@
             <span class="metric-unit">ROWS</span>
           </div>
           <div class="metric-sub">
-            <span>5s Log Interval</span>
-            <span>Auto Saved</span>
+            <span>15s Log Interval</span>
+            <span>Quota Protected</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action & Controls Bar -->
+      <div class="panel" style="margin-bottom:20px; padding:14px 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-weight:700; font-size:0.95rem; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+              <i data-lucide="cloud" style="color:var(--primary-cyan); width:18px; height:18px;"></i> Google Sheets Gateway
+            </span>
+            <span class="badge badge-success" id="sheetStatusBadge" style="font-size:0.75rem;">CONNECTED</span>
+          </div>
+
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-cyan" onclick="logGoogleSheetsSnapshot()" title="Immediately send a snapshot of current telemetry to Google Sheets">
+              <i data-lucide="send"></i> Log Snapshot Now
+            </button>
+            <button class="btn btn-primary" onclick="syncGoogleSheetsData()" title="Fetch all stored rows directly from Google Sheet">
+              <i data-lucide="download-cloud"></i> Sync from Sheets
+            </button>
+            <button class="btn btn-dark" onclick="toggleSheetConfigPanel()" title="Configure and Test Google Apps Script Webhook">
+              <i data-lucide="settings"></i> Webhook &amp; Test
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapsible Webhook Settings & Testing Panel -->
+        <div id="sheetConfigPanel" style="display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-color);">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-bottom:14px;">
+            <div>
+              <label style="font-size:0.8rem; font-weight:600; color:var(--text-muted); display:block; margin-bottom:6px;">Google Apps Script Web App URL (Webhook)</label>
+              <input type="text" id="cfgWebhookUrl" class="input-field" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%;">
+            </div>
+            <div>
+              <label style="font-size:0.8rem; font-weight:600; color:var(--text-muted); display:block; margin-bottom:6px;">Google Spreadsheet Embed / Share URL</label>
+              <input type="text" id="cfgEmbedUrl" class="input-field" placeholder="https://docs.google.com/spreadsheets/d/.../edit?usp=sharing" style="width:100%;">
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-cyan" onclick="saveGoogleSheetsConfig()">Save Configuration</button>
+              <button class="btn btn-dark" onclick="testGoogleSheetsWebhook()">⚡ Test Connection</button>
+            </div>
+            <div id="cfgTestResult" style="font-size:0.85rem; font-family:var(--font-mono); color:var(--text-muted);">
+              Ready to test.
+            </div>
+          </div>
+
+          <div style="margin-top:12px; padding:10px 14px; background:rgba(59, 130, 246, 0.08); border:1px solid rgba(59, 130, 246, 0.2); border-radius:8px; font-size:0.8rem; color:var(--text-muted);">
+            💡 <strong>Troubleshooting Note:</strong> If the embedded sheet shows <em>Access Denied</em> or fails to load, open your Google Sheet, click <strong>Share</strong> (top-right) &rarr; General access &rarr; Set to <strong>"Anyone with the link can view"</strong>.
           </div>
         </div>
       </div>
@@ -394,19 +446,64 @@
         </div>
       </div>
 
+      <!-- Live Google Sheets Telemetry Data Table -->
+      <div class="panel" style="margin-bottom:24px;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <i data-lucide="table" style="color:var(--accent-green)"></i>
+            <h2>Live Google Sheets Telemetry Table</h2>
+          </div>
+
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <input type="text" id="sheetTableSearch" placeholder="Search rows..." oninput="filterSheetTable()" class="input-field" style="padding:6px 12px; font-size:0.85rem; width:180px;">
+            <button class="btn btn-dark btn-sm" onclick="exportSheetTableCSV()" title="Download table rows as CSV">
+              <i data-lucide="download"></i> Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto; max-height:420px; border-radius:8px; border:1px solid var(--border-color);">
+          <table id="sheetTelemetryTable" style="width:100%; border-collapse:collapse; font-size:0.875rem; text-align:left; font-family:var(--font-mono);">
+            <thead>
+              <tr style="background:var(--bg-card-hover); color:var(--text-muted); border-bottom:1px solid var(--border-color); position:sticky; top:0; z-index:2;">
+                <th style="padding:10px 14px;">Timestamp</th>
+                <th style="padding:10px 14px;">Device ID</th>
+                <th style="padding:10px 14px;">Voltage (V)</th>
+                <th style="padding:10px 14px;">Current (A)</th>
+                <th style="padding:10px 14px;">Power (W)</th>
+                <th style="padding:10px 14px;">Energy (kWh)</th>
+                <th style="padding:10px 14px;">Freq (Hz)</th>
+                <th style="padding:10px 14px;">PF</th>
+                <th style="padding:10px 14px;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="sheetTableBody">
+              <tr>
+                <td colspan="9" style="padding:24px; text-align:center; color:var(--text-muted);">
+                  Loading Google Sheets telemetry records...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Live Google Sheets Embedded Spreadsheet View -->
       <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
           <div>
             <h2 style="font-size:1.25rem; font-weight:700; display:flex; align-items:center; gap:8px; margin:0;">
-              <span>📊</span> Live Google Sheets Spreadsheet
+              <span>📊</span> Live Google Spreadsheet View
             </h2>
             <p style="font-size:0.875rem; color:var(--text-muted); margin:6px 0 0 0;">
-              Real-time telemetry readings from ESP32 automatically logged and synchronized to Google Cloud every 5 seconds.
+              Real-time telemetry readings from ESP32 automatically logged and synchronized to Google Cloud.
             </p>
           </div>
           <div style="display:flex; gap:10px; align-items:center;">
-            <a href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="theme-toggle-btn" style="display:inline-flex; align-items:center; gap:6px; text-decoration:none; padding:8px 16px; border-radius:8px; font-weight:700; font-size:0.875rem; border:1px solid var(--border-color);">
+            <button class="btn btn-dark btn-sm" onclick="reloadGoogleSheetIframe()" title="Reload embedded spreadsheet">
+              <i data-lucide="refresh-cw"></i> Reload Frame
+            </button>
+            <a id="sheetExternalLink" href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="theme-toggle-btn" style="display:inline-flex; align-items:center; gap:6px; text-decoration:none; padding:8px 16px; border-radius:8px; font-weight:700; font-size:0.875rem; border:1px solid var(--border-color);">
               <span>Open in Google Sheets ↗</span>
             </a>
           </div>
@@ -414,6 +511,7 @@
 
         <div style="width:100%; height:600px; border-radius:10px; overflow:hidden; border:1px solid var(--border-color); background:#0f172a;">
           <iframe 
+            id="googleSheetFrame"
             src="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?embedded=true&rm=minimal" 
             style="width:100%; height:100%; border:none;"
             allowfullscreen>
