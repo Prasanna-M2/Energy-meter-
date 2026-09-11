@@ -25,8 +25,12 @@ const state = {
   // Charts & Database
   liveChart: null,
   historyChart: null,
+  sheetChart: null,
+  activeSheetMetric: 'power',
+  sheetDataCache: [],
   db: null,
   cumulativeWh: 0.0,
+  cumulativeEnergy: 0.0,
   lastTimestamp: Date.now(),
   peakCurrent: 0.00,
   liveDataBuffer: [],
@@ -128,7 +132,7 @@ function updateChartsTheme() {
   const gridColor = isLight ? 'rgba(203, 213, 225, 0.6)' : 'rgba(255, 255, 255, 0.05)';
   const tickColor = isLight ? '#475569' : '#64748b';
 
-  [state.liveChart, state.historyChart].forEach(chart => {
+  [state.liveChart, state.historyChart, state.sheetChart].forEach(chart => {
     if (!chart || !chart.options) return;
     if (chart.options.scales.x) {
       chart.options.scales.x.grid.color = gridColor;
@@ -154,6 +158,11 @@ function switchTab(tabId, btn) {
 
   if (tabId === 'historyTab') {
     fetchHistoryRange('7d');
+  } else if (tabId === 'sheetTab') {
+    if (!state.sheetChart) {
+      setTimeout(initSheetAnalyticsChart, 50);
+    }
+    fetchSheetAnalyticsData();
   }
 
   // Redraw canvas scope if entering liveTab
@@ -632,8 +641,15 @@ function pushTelemetryToUI(data) {
   const i = (data.current !== undefined && !isNaN(parseFloat(data.current))) ? parseFloat(data.current) : 0.0;
   const p = (data.power !== undefined && !isNaN(parseFloat(data.power))) ? parseFloat(data.power) : 0.0;
   const f = (data.frequency !== undefined && !isNaN(parseFloat(data.frequency))) ? parseFloat(data.frequency) : 0.0;
-  const energyKWh = (data.energy !== undefined && !isNaN(parseFloat(data.energy))) ? parseFloat(data.energy) : 0.0;
-  const pf = (data.pf !== undefined && !isNaN(parseFloat(data.pf))) ? parseFloat(data.pf) : 0.0;
+
+  // Support both 'energy' and 'kwh'
+  const energyRaw = (data.energy !== undefined) ? data.energy : (data.kwh !== undefined ? data.kwh : undefined);
+  const energyKWh = (typeof energyRaw !== 'undefined' && !isNaN(parseFloat(energyRaw))) ? parseFloat(energyRaw) : state.cumulativeEnergy;
+  if (energyKWh > 0) state.cumulativeEnergy = energyKWh;
+
+  // Support both 'pf' and 'power_factor'
+  const pfRaw = (data.pf !== undefined) ? data.pf : (data.power_factor !== undefined ? data.power_factor : undefined);
+  const pf = (typeof pfRaw !== 'undefined' && !isNaN(parseFloat(pfRaw))) ? parseFloat(pfRaw) : 0.0;
   const statusStr = data.status || (v > 5.0 ? 'ONLINE' : 'DISCONNECTED');
 
   state.vRms = v;
@@ -685,8 +701,8 @@ function pushTelemetryToUI(data) {
 
   if (elP) elP.textContent = p.toFixed(1);
   if (elAp) elAp.textContent = (v * i).toFixed(0);
-  if (elE) elE.textContent = energyKWh.toFixed(3);
-  if (elEw) elEw.textContent = (energyKWh * 1000).toFixed(1);
+  if (elE) elE.textContent = energyKWh.toFixed(4);
+  if (elEw) elEw.textContent = (energyKWh * 1000).toFixed(2);
   if (elF) elF.textContent = f.toFixed(1);
   if (elPf) elPf.textContent = pf.toFixed(2);
   if (elPfp) elPfp.textContent = Math.round(pf * 100);
@@ -731,14 +747,14 @@ async function fetchLatestData() {
     if (res.ok) {
       const json = await res.json();
       if (json) {
-        if (json.status === 'OFFLINE' || (json.last_seen_seconds_ago !== undefined && json.last_seen_seconds_ago > 5)) {
-          // Device is offline: Strictly push 0 to UI
+        if (json.status === 'OFFLINE' || (json.last_seen_seconds_ago !== undefined && json.last_seen_seconds_ago > 15)) {
+          // Device is offline: Strictly push 0 to UI (while preserving accumulated kWh)
           pushTelemetryToUI({
             voltage: 0.0,
             current: 0.0,
             power: 0.0,
             frequency: 0.0,
-            energy: (json.telemetry && json.telemetry.energy) || 0.0,
+            energy: (json.telemetry && json.telemetry.energy) || state.cumulativeEnergy || 0.0,
             pf: 0.0,
             status: 'OFFLINE'
           });
@@ -902,23 +918,127 @@ function exportDataCSV() {
   };
 }
 
-function exportDataJSON() {
-  if (!state.db) return;
-  const transaction = state.db.transaction(['telemetry'], 'readonly');
-  transaction.objectStore('telemetry').getAll().onsuccess = (e) => {
-    const data = e.target.result;
-    const link = document.createElement('a');
-    link.href = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
-    link.download = `ESP32_Energy_Telemetry_${Date.now()}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-}
-
 function copyCode(elementId) {
   const codeText = document.getElementById(elementId).innerText;
   navigator.clipboard.writeText(codeText).then(() => {
     alert('Code copied to clipboard!');
   });
+}
+
+// ----------------------------------------------------
+// 9. GOOGLE SHEETS CLOUD ANALYTICS & CHART ENGINE
+// ----------------------------------------------------
+function initSheetAnalyticsChart() {
+  const ctx = document.getElementById('sheetAnalyticsChart');
+  if (!ctx) return;
+
+  const isLight = state.currentTheme === 'light';
+  const gridColor = isLight ? 'rgba(203, 213, 225, 0.6)' : 'rgba(255, 255, 255, 0.05)';
+  const tickColor = isLight ? '#475569' : '#64748b';
+
+  state.sheetChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Active Power (Watts)',
+          data: [],
+          borderColor: '#00e676',
+          backgroundColor: 'rgba(0, 230, 118, 0.1)',
+          borderWidth: 2,
+          pointRadius: 1.5,
+          tension: 0.35,
+          fill: true
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { color: tickColor, font: { family: 'JetBrains Mono', size: 11 } }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: gridColor },
+          ticks: {
+            color: tickColor,
+            font: { family: 'JetBrains Mono', size: 10 },
+            maxTicksLimit: 8,
+            autoSkip: true
+          }
+        },
+        y: {
+          grid: { color: gridColor },
+          ticks: { color: tickColor, font: { family: 'JetBrains Mono', size: 10 } }
+        }
+      }
+    }
+  });
+}
+
+function setSheetChartMetric(metric, btnElement) {
+  state.activeSheetMetric = metric;
+  if (btnElement && btnElement.parentElement) {
+    btnElement.parentElement.querySelectorAll('.btn-sm').forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+  }
+  renderSheetAnalyticsChart();
+}
+
+async function fetchSheetAnalyticsData() {
+  try {
+    const res = await fetch('/api/sheets-data');
+    if (res.ok) {
+      const json = await res.json();
+      state.sheetDataCache = json.records || [];
+
+      // Update KPI cards
+      const elTot = document.getElementById('sheetTotalRecords');
+      const elE = document.getElementById('sheetTotalEnergy');
+      const elPf = document.getElementById('sheetAvgPF');
+      const elP = document.getElementById('sheetPeakPower');
+
+      if (elTot) elTot.textContent = (json.total_records || state.sheetDataCache.length).toLocaleString();
+      if (elE) elE.textContent = (json.latest_energy_kwh || 0.0).toFixed(4);
+      if (elPf) elPf.textContent = (json.avg_pf || 0.0).toFixed(2);
+      if (elP) elP.textContent = (json.peak_power_w || 0.0).toFixed(1);
+
+      if (!state.sheetChart) {
+        initSheetAnalyticsChart();
+      }
+      renderSheetAnalyticsChart();
+    }
+  } catch (err) {
+    console.warn('Error fetching Google Sheets analytics:', err);
+  }
+}
+
+function renderSheetAnalyticsChart() {
+  if (!state.sheetChart || !state.sheetDataCache || state.sheetDataCache.length === 0) return;
+
+  const metric = state.activeSheetMetric || 'power';
+  const metricConfigs = {
+    power: { label: 'Active Power (Watts)', color: '#00e676', bg: 'rgba(0, 230, 118, 0.1)', key: 'power' },
+    energy: { label: 'Cumulative Energy (kWh)', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.1)', key: 'energy' },
+    pf: { label: 'Power Factor (PF)', color: '#a855f7', bg: 'rgba(168, 85, 247, 0.1)', key: 'pf' },
+    voltage: { label: 'AC Voltage (Volts)', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', key: 'voltage' },
+    current: { label: 'Current Draw (Amps)', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)', key: 'current' }
+  };
+
+  const cfg = metricConfigs[metric] || metricConfigs.power;
+  const labels = state.sheetDataCache.map(r => r.time || new Date(r.timestamp).toLocaleTimeString([], { hour12: false }));
+  const values = state.sheetDataCache.map(r => r[cfg.key] !== undefined ? r[cfg.key] : 0);
+
+  state.sheetChart.data.labels = labels;
+  state.sheetChart.data.datasets[0].label = cfg.label;
+  state.sheetChart.data.datasets[0].data = values;
+  state.sheetChart.data.datasets[0].borderColor = cfg.color;
+  state.sheetChart.data.datasets[0].backgroundColor = cfg.bg;
+  state.sheetChart.update('none');
 }

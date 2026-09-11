@@ -135,8 +135,15 @@ app.post('/api/telemetry', (req, res) => {
   const current = (typeof body.current !== 'undefined' && !isNaN(parseFloat(body.current))) ? parseFloat(body.current) : 0.0;
   const power = (typeof body.power !== 'undefined' && !isNaN(parseFloat(body.power))) ? parseFloat(body.power) : 0.0;
   const frequency = (typeof body.frequency !== 'undefined' && !isNaN(parseFloat(body.frequency))) ? parseFloat(body.frequency) : 0.0;
-  const energy = (typeof body.energy !== 'undefined' && !isNaN(parseFloat(body.energy))) ? parseFloat(body.energy) : 0.0;
-  const pf = (typeof body.pf !== 'undefined' && !isNaN(parseFloat(body.pf))) ? parseFloat(body.pf) : 0.0;
+  
+  // Support both 'energy' and 'kwh'
+  const energyRaw = (typeof body.energy !== 'undefined') ? body.energy : (typeof body.kwh !== 'undefined' ? body.kwh : undefined);
+  const energy = (typeof energyRaw !== 'undefined' && !isNaN(parseFloat(energyRaw))) ? parseFloat(energyRaw) : 0.0;
+  
+  // Support both 'pf' and 'power_factor'
+  const pfRaw = (typeof body.pf !== 'undefined') ? body.pf : (typeof body.power_factor !== 'undefined' ? body.power_factor : undefined);
+  const pf = (typeof pfRaw !== 'undefined' && !isNaN(parseFloat(pfRaw))) ? parseFloat(pfRaw) : 0.0;
+
   const rssi = parseInt(body.rssi) || -55;
   const uptime = parseInt(body.uptime) || 0;
 
@@ -194,11 +201,13 @@ app.post('/api/telemetry', (req, res) => {
   res.status(200).json({ status: 'success', message: 'Telemetry received' });
 });
 
-// Watchdog: If no telemetry received for > 5 seconds, broadcast OFFLINE zero metrics
+// Watchdog: If no telemetry received for > 15 seconds (allows 5s send interval + network latency), broadcast OFFLINE
 setInterval(() => {
   const elapsed = (Date.now() - deviceState.lastSeen) / 1000;
-  if (deviceState.lastSeen > 0 && elapsed >= 5 && deviceState.online) {
+  if (deviceState.lastSeen > 0 && elapsed >= 15 && deviceState.online) {
     deviceState.online = false;
+    const records = readTelemetryDB();
+    const lastEnergy = (records.length > 0 && records[records.length - 1].energy) ? records[records.length - 1].energy : 0.0;
     broadcast({
       type: 'telemetry',
       device_id: deviceState.deviceId,
@@ -208,7 +217,7 @@ setInterval(() => {
         current: 0.0,
         power: 0.0,
         frequency: 0.0,
-        energy: 0.0,
+        energy: lastEnergy, // Retain accumulated kWh
         pf: 0.0,
         rssi: -127,
         uptime: 0,
@@ -220,7 +229,7 @@ setInterval(() => {
 
 app.get('/api/devices', (req, res) => {
   const elapsed = (Date.now() - deviceState.lastSeen) / 1000;
-  const status = (deviceState.lastSeen === 0 || elapsed > 15) ? 'OFFLINE' : (elapsed > 5 ? 'WARNING' : 'ONLINE');
+  const status = (deviceState.lastSeen === 0 || elapsed > 25) ? 'OFFLINE' : (elapsed > 15 ? 'WARNING' : 'ONLINE');
   res.json([
     {
       device_id: deviceState.deviceId,
@@ -237,8 +246,8 @@ app.get('/api/devices/:deviceId/latest', (req, res) => {
   const records = readTelemetryDB();
   const latest = records.length > 0 ? records[records.length - 1] : null;
   const elapsed = (Date.now() - deviceState.lastSeen) / 1000;
-  const isOnline = deviceState.lastSeen > 0 && elapsed < 5;
-  const isWarning = elapsed >= 5 && elapsed <= 15;
+  const isOnline = deviceState.lastSeen > 0 && elapsed < 15;
+  const isWarning = elapsed >= 15 && elapsed <= 25;
   const status = isOnline ? 'ONLINE' : (isWarning ? 'WARNING' : 'OFFLINE');
 
   // STRICT REQUIREMENT: When supply or device is disconnected (offline), return 0.0!
@@ -374,6 +383,46 @@ app.get('/api/devices/:deviceId/export', (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=telemetry_${req.params.deviceId}_${range}.csv`);
   res.send(csvContent);
+});
+
+// Google Sheets Synchronized Data & Analytics API
+app.get('/api/sheets-data', (req, res) => {
+  const records = readTelemetryDB();
+  const sampled = records.slice(-500); // Last 500 points for crisp charting
+
+  const totalPoints = records.length;
+  const powers = records.map(r => r.power || 0);
+  const voltages = records.map(r => r.voltage || 0);
+  const currents = records.map(r => r.current || 0);
+  const pfs = records.map(r => r.pf || 0).filter(p => p > 0);
+  const energies = records.map(r => r.energy || 0);
+
+  const latestEnergy = energies.length > 0 ? energies[energies.length - 1] : 0.0;
+  const peakPower = powers.length > 0 ? Math.max(...powers) : 0.0;
+  const avgVoltage = voltages.length > 0 ? (voltages.reduce((a, b) => a + b, 0) / voltages.length) : 0.0;
+  const avgCurrent = currents.length > 0 ? (currents.reduce((a, b) => a + b, 0) / currents.length) : 0.0;
+  const avgPF = pfs.length > 0 ? (pfs.reduce((a, b) => a + b, 0) / pfs.length) : 0.0;
+
+  res.json({
+    status: 'success',
+    total_records: totalPoints,
+    latest_energy_kwh: Math.round(latestEnergy * 10000) / 10000,
+    peak_power_w: Math.round(peakPower * 10) / 10,
+    avg_voltage_v: Math.round(avgVoltage * 10) / 10,
+    avg_current_a: Math.round(avgCurrent * 100) / 100,
+    avg_pf: Math.round(avgPF * 100) / 100,
+    records: sampled.map(r => ({
+      timestamp: r.timestamp,
+      time: new Date(r.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      iso: new Date(r.timestamp).toISOString(),
+      voltage: r.voltage || 0.0,
+      current: r.current || 0.0,
+      power: r.power || 0.0,
+      energy: r.energy || 0.0,
+      frequency: r.frequency || 50.0,
+      pf: r.pf || 0.0
+    }))
+  });
 });
 
 // Fallback to studio index.html

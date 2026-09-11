@@ -266,9 +266,6 @@
               <button class="btn-sm" onclick="fetchHistoryRange('3d', this)">3 Days</button>
               <button class="btn-sm active" onclick="fetchHistoryRange('7d', this)">7 Days</button>
             </div>
-            <button class="btn btn-cyan" onclick="exportDataJSON()">
-              <i data-lucide="file-json"></i> Export JSON
-            </button>
             <button class="btn btn-danger" onclick="clearHistoryData()">
               <i data-lucide="trash-2"></i> Clear Database
             </button>
@@ -305,16 +302,107 @@
       </div>
     </div>
 
-    <!-- TAB 3: LIVE GOOGLE SHEET DB -->
+    <!-- TAB 3: LIVE GOOGLE SHEET DB & ANALYTICS -->
     <div id="sheetTab" class="tab-content">
+      <!-- Google Sheets Cloud Analytics Overview KPI Cards -->
+      <div class="metrics-grid" style="margin-bottom:20px;">
+        <div class="metric-card energy">
+          <div class="metric-header">
+            <span class="metric-title">Total Logged Energy</span>
+            <div class="metric-icon"><i data-lucide="battery-charging"></i></div>
+          </div>
+          <div>
+            <span class="metric-value" id="sheetTotalEnergy">0.0000</span>
+            <span class="metric-unit">kWh</span>
+          </div>
+          <div class="metric-sub">
+            <span>Cumulative Total</span>
+            <span>Cloud Synced</span>
+          </div>
+        </div>
+
+        <div class="metric-card pf">
+          <div class="metric-header">
+            <span class="metric-title">Average Power Factor</span>
+            <div class="metric-icon"><i data-lucide="sliders"></i></div>
+          </div>
+          <div>
+            <span class="metric-value" id="sheetAvgPF">0.00</span>
+            <span class="metric-unit">PF</span>
+          </div>
+          <div class="metric-sub">
+            <span>Grid Efficiency</span>
+            <span>Google DB</span>
+          </div>
+        </div>
+
+        <div class="metric-card power">
+          <div class="metric-header">
+            <span class="metric-title">Peak Active Power</span>
+            <div class="metric-icon"><i data-lucide="gauge"></i></div>
+          </div>
+          <div>
+            <span class="metric-value" id="sheetPeakPower">0.0</span>
+            <span class="metric-unit">WATTS</span>
+          </div>
+          <div class="metric-sub">
+            <span>Highest Draw</span>
+            <span>Recorded</span>
+          </div>
+        </div>
+
+        <div class="metric-card freq">
+          <div class="metric-header">
+            <span class="metric-title">Total Telemetry Rows</span>
+            <div class="metric-icon"><i data-lucide="database"></i></div>
+          </div>
+          <div>
+            <span class="metric-value" id="sheetTotalRecords">0</span>
+            <span class="metric-unit">ROWS</span>
+          </div>
+          <div class="metric-sub">
+            <span>5s Log Interval</span>
+            <span>Auto Saved</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Google Sheets Interactive Analysis Graph Panel -->
+      <div class="panel" style="margin-bottom:24px;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <i data-lucide="line-chart" style="color:var(--primary-cyan)"></i>
+            <h2>Google Sheets Telemetry Analytics &amp; Trend Graph</h2>
+          </div>
+
+          <div class="toolbar-group">
+            <div class="btn-group">
+              <button class="btn-sm active" id="btnSheetMetricPower" onclick="setSheetChartMetric('power', this)">Active Power (W)</button>
+              <button class="btn-sm" id="btnSheetMetricEnergy" onclick="setSheetChartMetric('energy', this)">Energy (kWh)</button>
+              <button class="btn-sm" id="btnSheetMetricPF" onclick="setSheetChartMetric('pf', this)">Power Factor</button>
+              <button class="btn-sm" id="btnSheetMetricVoltage" onclick="setSheetChartMetric('voltage', this)">Voltage (V)</button>
+              <button class="btn-sm" id="btnSheetMetricCurrent" onclick="setSheetChartMetric('current', this)">Current (A)</button>
+            </div>
+            <button class="btn btn-cyan" onclick="fetchSheetAnalyticsData()" title="Reload Google Sheets Data">
+              <i data-lucide="refresh-cw"></i> Refresh Data
+            </button>
+          </div>
+        </div>
+
+        <div class="chart-container" style="height:360px;">
+          <canvas id="sheetAnalyticsChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Live Google Sheets Embedded Spreadsheet View -->
       <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
           <div>
             <h2 style="font-size:1.25rem; font-weight:700; display:flex; align-items:center; gap:8px; margin:0;">
-              <span>📊</span> Live Google Sheets Cloud Database
+              <span>📊</span> Live Google Sheets Spreadsheet
             </h2>
             <p style="font-size:0.875rem; color:var(--text-muted); margin:6px 0 0 0;">
-              Real-time telemetry readings from ESP32 automatically logged and synchronized to Google Cloud.
+              Real-time telemetry readings from ESP32 automatically logged and synchronized to Google Cloud every 5 seconds.
             </p>
           </div>
           <div style="display:flex; gap:10px; align-items:center;">
@@ -324,7 +412,7 @@
           </div>
         </div>
 
-        <div style="width:100%; height:680px; border-radius:10px; overflow:hidden; border:1px solid var(--border-color); background:#0f172a;">
+        <div style="width:100%; height:600px; border-radius:10px; overflow:hidden; border:1px solid var(--border-color); background:#0f172a;">
           <iframe 
             src="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?embedded=true&rm=minimal" 
             style="width:100%; height:100%; border:none;"
