@@ -22,7 +22,7 @@ app.use(express.static(path.join(__dirname)));
 // 1. CONFIGURATION & STATE
 // ==============================================================================
 let config = {
-  googleSheetWebhookUrl: process.env.GOOGLE_SHEET_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbzIh_Xz9nYntkk6mwHR-G90nswS5L8UPFmxbCdUzJ1zzZEi32b6Jd_mr_XK79uoD4ZOsA/exec',
+  googleSheetWebhookUrl: process.env.GOOGLE_SHEET_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbxwqlBZPsX6Mi0iyJWtiwra6S_pWYUDzfmpeoekIyOQU1c8HkBxVuj5BZvBI0h5YfEv1Q/exec',
   googleSheetEmbedUrl: process.env.GOOGLE_SHEET_EMBED_URL || 'https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing',
   sheetLogIntervalMs: 15000 // Disciplined 15-second interval (safely below Google Apps Script limits)
 };

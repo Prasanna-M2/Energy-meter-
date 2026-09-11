@@ -1,51 +1,33 @@
 /**
  * ==============================================================================
- * Google Apps Script for ESP32 Real-Time Energy Monitor & Data Sharing API
+ * ESP32 Real-Time Energy Monitor - Google Apps Script Webhook (Top-Row Ingestion)
  * ==============================================================================
- * 
- * FEATURES:
- * 1. Data Ingestion (doPost):
- *    - Strict numeric validation (preserves real 0.0 readings without false fallbacks)
- *    - Automatic Header initialization and frozen row formatting
- *    - Records: Timestamp, Device ID, Voltage, Current, Power, Energy, Frequency, PF, Status
- * 2. Bi-directional Data Sharing (doGet):
- *    - ?action=read : Returns last N records (default 100) as JSON
- *    - ?action=latest : Returns the single most recent telemetry record
- *    - ?action=stats : Returns aggregated statistics (total records, peak power, total energy)
- *    - ?action=ping : Verifies webhook connectivity and health
- * 
- * SETUP INSTRUCTIONS:
- * 1. Open your Google Sheet (or create one at https://sheets.new)
- * 2. Go to: Extensions > Apps Script
- * 3. Delete any existing code and PASTE this complete script
- * 4. Click 'Save' (disk icon)
- * 5. Click 'Deploy' > 'New deployment'
- *    - Select type: 'Web app'
- *    - Description: 'PulseIoT Energy Telemetry Webhook v2'
- *    - Execute as: 'Me'
- *    - Who has access: 'Anyone' (IMPORTANT: Must be 'Anyone')
- * 6. Click 'Deploy', authorize permissions if prompted, and copy the Web App URL.
- * 7. In your Google Sheet, click 'Share' (top-right) -> General access -> 'Anyone with the link can view'
- *    (This allows the embedded dashboard iframe to render without 401 Unauthorized errors!)
+ * Features:
+ * 1. Inserts new readings directly at ROW 2 (Top of sheet, right under the headers):
+ *    - Newest readings are immediately visible without scrolling down thousands of rows!
+ * 2. Matches exact spreadsheet column layout:
+ *    Col A: Timestamp | Col B: Voltage (V) | Col C: Current (A) | Col D: Power (W)
+ *    Col E: Energy (kWh) | Col F: Frequency (Hz) | Col G: Power Factor | Col H: Device ID | Col I: Status
+ * 3. Bi-directional API: logs via POST, reads/shares records via GET
+ * 4. Automatic cleanup endpoint (?action=cleanup) to remove old blank rows
  * ==============================================================================
  */
 
 var HEADERS = [
   "Timestamp",
-  "Device ID",
   "Voltage (V)",
   "Current (A)",
   "Power (W)",
   "Energy (kWh)",
   "Frequency (Hz)",
   "Power Factor",
+  "Device ID",
   "Status"
 ];
 
-// Helper: Ensure the active sheet has proper headers and structure
-function getOrCreateSheet() {
+function getTargetSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getActiveSheet();
+  var sheet = ss.getSheetByName("Sheet1") || ss.getActiveSheet();
 
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADERS);
@@ -60,22 +42,24 @@ function getOrCreateSheet() {
 }
 
 // ------------------------------------------------------------------------------
-// POST: Ingest telemetry from ESP32 or Cloud Server
+// POST: Ingest Telemetry and Insert at Row 2 (Top of Sheet)
 // ------------------------------------------------------------------------------
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
-      return jsonResponse({ result: "error", message: "Empty POST body received" }, 400);
+      return ContentService.createTextOutput(JSON.stringify({
+        "result": "error",
+        "message": "Empty POST body received"
+      })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    var sheet = getOrCreateSheet();
+    var sheet = getTargetSheet();
     var data = JSON.parse(e.postData.contents);
 
     var now = new Date();
-    var timestamp = data.timestamp ? new Date(data.timestamp).toISOString() : now.toISOString();
-    var deviceId = data.device_id || data.deviceId || "ESP32-001";
+    var timestamp = data.timestamp ? new Date(data.timestamp).toLocaleString() : now.toLocaleString();
+    var deviceId  = data.device_id || data.deviceId || "ESP32-001";
 
-    // Strict numeric extraction - never turn a legitimate 0.0 into 50 or 1.0!
     var voltage   = (data.voltage !== undefined && data.voltage !== null && !isNaN(Number(data.voltage))) ? Number(data.voltage) : 0.0;
     var current   = (data.current !== undefined && data.current !== null && !isNaN(Number(data.current))) ? Number(data.current) : 0.0;
     var power     = (data.power !== undefined && data.power !== null && !isNaN(Number(data.power))) ? Number(data.power) : 0.0;
@@ -84,133 +68,122 @@ function doPost(e) {
     var pf        = (data.pf !== undefined && data.pf !== null && !isNaN(Number(data.pf))) ? Number(data.pf) : 0.0;
     var status    = data.status || (voltage > 5.0 ? "ONLINE" : "DISCONNECTED");
 
-    // Append new row
-    sheet.appendRow([
+    // Exact Column Order matching the Google Sheet:
+    // A: Timestamp | B: Voltage | C: Current | D: Power | E: Energy | F: Freq | G: PF | H: Device ID | I: Status
+    var newRow = [
       timestamp,
-      deviceId,
       voltage,
       current,
       power,
       energy,
       frequency,
       pf,
+      deviceId,
       status
-    ]);
+    ];
 
-    return jsonResponse({
-      result: "success",
-      message: "Telemetry logged successfully",
-      timestamp: timestamp,
-      row: sheet.getLastRow(),
-      recorded: {
-        device_id: deviceId,
-        voltage: voltage,
-        current: current,
-        power: power,
-        energy: energy,
-        frequency: frequency,
-        pf: pf,
-        status: status
+    // Insert directly at Row 2 so it is immediately visible at the top!
+    sheet.insertRowAfter(1);
+    sheet.getRange(2, 1, 1, newRow.length).setValues([newRow]);
+
+    return ContentService.createTextOutput(JSON.stringify({
+      "result": "success",
+      "message": "Telemetry logged at Row 2",
+      "row": 2,
+      "recorded": {
+        "timestamp": timestamp,
+        "voltage": voltage,
+        "current": current,
+        "power": power,
+        "energy": energy,
+        "frequency": frequency,
+        "pf": pf,
+        "device_id": deviceId,
+        "status": status
       }
-    });
+    })).setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
-    return jsonResponse({ result: "error", message: error.toString() });
+    return ContentService.createTextOutput(JSON.stringify({
+      "result": "error",
+      "message": error.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
 // ------------------------------------------------------------------------------
-// GET: Bi-directional Data Sharing & Telemetry Retrieval API
+// GET: Read Data & Cleanup API
 // ------------------------------------------------------------------------------
 function doGet(e) {
   try {
-    var sheet = getOrCreateSheet();
+    var sheet = getTargetSheet();
     var params = (e && e.parameter) ? e.parameter : {};
-    var action = (params.action || "read").toLowerCase();
+    var action = (params.action || "ping").toLowerCase();
 
-    // 1. Connectivity Ping Action
+    // 1. Webhook Ping Health Check
     if (action === "ping") {
-      return jsonResponse({
-        result: "success",
-        message: "PulseIoT ESP32 Energy Monitor Webhook is Active & Ready!",
-        spreadsheet_name: SpreadsheetApp.getActiveSpreadsheet().getName(),
-        total_rows: sheet.getLastRow(),
-        timestamp: new Date().toISOString()
-      });
+      return ContentService.createTextOutput(JSON.stringify({
+        "result": "success",
+        "message": "PulseIoT ESP32 Google Sheet Webhook is Active!",
+        "total_rows": sheet.getLastRow(),
+        "timestamp": new Date().toISOString()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 2. Clean up old/empty rows in bulk
+    if (action === "cleanup") {
+      var lastRow = sheet.getLastRow();
+      if (lastRow > 2) {
+        sheet.deleteRows(3, lastRow - 2);
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        "result": "success",
+        "message": "Old rows cleaned up! All new readings will appear starting at Row 2."
+      })).setMimeType(ContentService.MimeType.JSON);
     }
 
     var lastRow = sheet.getLastRow();
     if (lastRow <= 1) {
-      return jsonResponse({
-        result: "success",
-        total_records: 0,
-        records: [],
-        message: "No data rows logged yet"
-      });
+      return ContentService.createTextOutput(JSON.stringify({
+        "result": "success",
+        "total_records": 0,
+        "records": []
+      })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    var limit = params.limit ? Math.min(parseInt(params.limit, 10), 1000) : 100;
-    var startRow = Math.max(2, lastRow - limit + 1);
-    var numRows = lastRow - startRow + 1;
+    var limit = params.limit ? Math.min(parseInt(params.limit, 10), 100) : 50;
+    var numRows = Math.min(lastRow - 1, limit);
 
-    var rangeData = sheet.getRange(startRow, 1, numRows, HEADERS.length).getValues();
+    // Read top N rows (starting from Row 2 down)
+    var rangeData = sheet.getRange(2, 1, numRows, HEADERS.length).getValues();
     var records = [];
 
     for (var i = 0; i < rangeData.length; i++) {
       var row = rangeData[i];
+      if (!row[0] && !row[1] && !row[7]) continue; // Skip completely blank lines
       records.push({
         timestamp: row[0],
-        device_id: row[1],
-        voltage: Number(row[2]) || 0.0,
-        current: Number(row[3]) || 0.0,
-        power: Number(row[4]) || 0.0,
-        energy: Number(row[5]) || 0.0,
-        frequency: Number(row[6]) || 0.0,
-        pf: Number(row[7]) || 0.0,
+        voltage: Number(row[1]) || 0.0,
+        current: Number(row[2]) || 0.0,
+        power: Number(row[3]) || 0.0,
+        energy: Number(row[4]) || 0.0,
+        frequency: Number(row[5]) || 0.0,
+        pf: Number(row[6]) || 0.0,
+        device_id: String(row[7] || ""),
         status: String(row[8] || "")
       });
     }
 
-    // 2. Latest Telemetry Action
-    if (action === "latest") {
-      var latest = records.length > 0 ? records[records.length - 1] : null;
-      return jsonResponse({
-        result: "success",
-        telemetry: latest
-      });
-    }
-
-    // 3. Aggregate Statistics Action
-    if (action === "stats") {
-      var powers = records.map(function(r) { return r.power; });
-      var energies = records.map(function(r) { return r.energy; });
-      var peakPower = powers.length > 0 ? Math.max.apply(null, powers) : 0.0;
-      var latestEnergy = energies.length > 0 ? energies[energies.length - 1] : 0.0;
-
-      return jsonResponse({
-        result: "success",
-        total_records: lastRow - 1,
-        sampled_records: records.length,
-        peak_power_w: peakPower,
-        latest_energy_kwh: latestEnergy
-      });
-    }
-
-    // 4. Default: Return Records (Data Sharing)
-    return jsonResponse({
-      result: "success",
-      total_records: lastRow - 1,
-      count: records.length,
-      records: records
-    });
+    return ContentService.createTextOutput(JSON.stringify({
+      "result": "success",
+      "total_records": lastRow - 1,
+      "records": records
+    })).setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
-    return jsonResponse({ result: "error", message: error.toString() });
+    return ContentService.createTextOutput(JSON.stringify({
+      "result": "error",
+      "message": error.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
   }
-}
-
-// Helper: Format JSON response with proper CORS headers
-function jsonResponse(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-                       .setMimeType(ContentService.MimeType.JSON);
 }
