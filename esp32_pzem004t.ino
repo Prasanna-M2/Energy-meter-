@@ -7,7 +7,8 @@
   1. REAL PZEM-004T v3.0 MEASUREMENTS:
      - Real-time AC Voltage (V), Current (A), Active Power (W)
      - Real-time Total Energy (kWh), Frequency (Hz), Power Factor (PF)
-     - Strict Zero-Out: When AC supply or PZEM is disconnected, values drop to 0.0!
+     - Strict Zero-Out: When AC supply or PZEM is disconnected, values drop to
+  0.0!
      - Non-blocking Modbus: Short-circuits instantly if mains AC is absent,
        saving >1000ms of blocking UART timeouts.
   2. U8g2 SSD1306 128x64 OLED Display (Rotating Live Pages):
@@ -20,7 +21,8 @@
   4. Dual-Core Asynchronous Networking (FreeRTOS Core 0):
      - Core 0 runs background HTTPS telemetry streaming (Render + Google Sheets)
      - Core 1 is 100% dedicated to PZEM Modbus polling, OLED, & local WebServer
-     - Local dashboard (http://192.168.4.1) responds in <10ms with ZERO stutters!
+     - Local dashboard (http://192.168.4.1) responds in <10ms with ZERO
+  stutters!
   5. Direct Google Sheets Webhook Fallback:
      - Logs directly to Google Apps Script every 30s as a secondary path
   6. Energy Counter Reset Web Endpoint:
@@ -43,14 +45,14 @@
   ==============================================================================
 */
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-#include <Wire.h>
-#include <U8g2lib.h>
+#include <HTTPClient.h>
 #include <PZEM004Tv30.h>
+#include <U8g2lib.h>
+#include <WebServer.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <Wire.h>
 
 // ==============================================================================
 // 1. HARDWARE PINS & MODULES
@@ -68,29 +70,29 @@
 PZEM004Tv30 pzem(Serial2, PZEM_RX_PIN, PZEM_TX_PIN);
 
 // U8g2 SSD1306 128x64 Full Buffer Hardware I2C
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(
-  U8G2_R0,
-  U8X8_PIN_NONE,
-  OLED_SCL_PIN,
-  OLED_SDA_PIN
-);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE, OLED_SCL_PIN,
+                                         OLED_SDA_PIN);
 
 // ==============================================================================
 // 2. WI-FI & CLOUD CONFIGURATION
 // ==============================================================================
 
 // Mobile Hotspot to reach Internet & Render Cloud
-const char* STA_SSID     = "NYX 3279";
-const char* STA_PASSWORD = "12345678";
+const char *STA_SSID = "NYX 3279";
+const char *STA_PASSWORD = "12345678";
 
 // Local ESP32 Dashboard Access Point
-const char* AP_SSID      = "ESP32-PZEM";
-const char* AP_PASSWORD  = "12345678";
+const char *AP_SSID = "ESP32-PZEM";
+const char *AP_PASSWORD = "12345678";
 
 // Telemetry Ingestion Endpoints
-const char* SERVER_ENDPOINT         = "https://energy-meter-5jie.onrender.com/api/telemetry";
-const char* GOOGLE_SHEETS_ENDPOINT  = "https://script.google.com/macros/s/AKfycbxwqlBZPsX6Mi0iyJWtiwra6S_pWYUDzfmpeoekIyOQU1c8HkBxVuj5BZvBI0h5YfEv1Q/exec";
-const char* DEVICE_ID               = "ESP32-001";
+const char *SERVER_ENDPOINT =
+    "https://energy-meter-5jie.onrender.com/api/telemetry";
+const char *GOOGLE_SHEETS_ENDPOINT =
+    "https://script.google.com/macros/s/"
+    "AKfycbxwqlBZPsX6Mi0iyJWtiwra6S_"
+    "pWYUDzfmpeoekIyOQU1c8HkBxVuj5BZvBI0h5YfEv1Q/exec";
+const char *DEVICE_ID = "ESP32-001";
 
 #define ENABLE_DIRECT_GOOGLE_SHEETS true
 
@@ -100,32 +102,32 @@ WebServer server(80);
 // 3. MEASUREMENT VARIABLES & THREAD SYNCHRONIZATION
 // ==============================================================================
 
-volatile float voltage     = 0.0f;
-volatile float current     = 0.0f;
-volatile float power       = 0.0f;
-volatile float energy      = 0.0f;
-volatile float frequency   = 0.0f;
-volatile float pf          = 0.0f;
+volatile float voltage = 0.0f;
+volatile float current = 0.0f;
+volatile float power = 0.0f;
+volatile float energy = 0.0f;
+volatile float frequency = 0.0f;
+volatile float pf = 0.0f;
 
-volatile bool pzemConnected        = false;
-volatile bool cloudConnected       = false;
+volatile bool pzemConnected = false;
+volatile bool cloudConnected = false;
 volatile bool googleSheetConnected = false;
-bool oledAvailable                 = false;
+bool oledAvailable = false;
 
 uint8_t oledPage = 0;
 const uint8_t OLED_PAGE_COUNT = 3;
 
 // Timers for Core 1 (Sensor, OLED, UI)
-unsigned long lastPZEMRead       = 0;
-const unsigned long PZEM_INTERVAL = 1000;  // Read PZEM sensor every 1000ms
+unsigned long lastPZEMRead = 0;
+const unsigned long PZEM_INTERVAL = 1000; // Read PZEM sensor every 1000ms
 
-unsigned long lastOLEDUpdate     = 0;
-const unsigned long OLED_INTERVAL = 300;   // Refresh OLED every 300ms
+unsigned long lastOLEDUpdate = 0;
+const unsigned long OLED_INTERVAL = 300; // Refresh OLED every 300ms
 
 unsigned long lastOLEDPageChange = 0;
 const unsigned long OLED_PAGE_INTERVAL = 3500; // Rotate OLED page every 3.5s
 
-unsigned long lastSerialDebug    = 0;
+unsigned long lastSerialDebug = 0;
 
 // Mutex for safe multi-core variable access
 portMUX_TYPE telemetryMutex = portMUX_INITIALIZER_UNLOCKED;
@@ -139,13 +141,14 @@ void readPZEM() {
   float v = pzem.voltage();
 
   if (isnan(v) || v <= 5.0f) {
-    // Zero-out immediately without incurring 5 additional UART timeout penalties
+    // Zero-out immediately without incurring 5 additional UART timeout
+    // penalties
     portENTER_CRITICAL(&telemetryMutex);
-    voltage       = 0.0f;
-    current       = 0.0f;
-    power         = 0.0f;
-    frequency     = 0.0f;
-    pf            = 0.0f;
+    voltage = 0.0f;
+    current = 0.0f;
+    power = 0.0f;
+    frequency = 0.0f;
+    pf = 0.0f;
     pzemConnected = false;
     portEXIT_CRITICAL(&telemetryMutex);
     return;
@@ -159,22 +162,24 @@ void readPZEM() {
   float factor = pzem.pf();
 
   portENTER_CRITICAL(&telemetryMutex);
-  voltage       = v;
-  current       = (isnan(c) || c < 0.002f) ? 0.0f : c;
-  power         = (isnan(p) || p < 0.1f) ? 0.0f : p;
-  energy        = isnan(e) ? energy : e; // Retain cumulative energy
-  frequency     = isnan(f) ? 0.0f : f;
-  pf            = (isnan(factor) || current < 0.01f || factor < 0.0f) ? 0.0f : factor;
+  voltage = v;
+  current = (isnan(c) || c < 0.002f) ? 0.0f : c;
+  power = (isnan(p) || p < 0.1f) ? 0.0f : p;
+  energy = isnan(e) ? energy : e; // Retain cumulative energy
+  frequency = isnan(f) ? 0.0f : f;
+  pf = (isnan(factor) || current < 0.01f || factor < 0.0f) ? 0.0f : factor;
   pzemConnected = true;
   portEXIT_CRITICAL(&telemetryMutex);
 }
 
 void printSerialDiagnostics() {
   if (pzemConnected) {
-    Serial.printf("[PZEM LIVE] V: %.1f V | I: %.2f A | P: %.1f W | E: %.4f kWh | F: %.1f Hz | PF: %.2f\n",
+    Serial.printf("[PZEM LIVE] V: %.1f V | I: %.2f A | P: %.1f W | E: %.4f kWh "
+                  "| F: %.1f Hz | PF: %.2f\n",
                   voltage, current, power, energy, frequency, pf);
   } else {
-    Serial.println("[PZEM STATUS] SUPPLY / SENSOR DISCONNECTED -> OUTPUTTING 0.0");
+    Serial.println(
+        "[PZEM STATUS] SUPPLY / SENSOR DISCONNECTED -> OUTPUTTING 0.0");
   }
 }
 
@@ -182,7 +187,7 @@ void printSerialDiagnostics() {
 // 5. U8G2 OLED DISPLAY PAGES
 // ==============================================================================
 
-void oledHeader(const char* title) {
+void oledHeader(const char *title) {
   oled.setFont(u8g2_font_6x10_tf);
   oled.drawStr(2, 9, title);
   oled.drawHLine(0, 11, 128);
@@ -242,13 +247,15 @@ void drawOLEDPage3() {
 
   oled.setFont(u8g2_font_6x10_tf);
   oled.setCursor(2, 23);
-  oled.printf("Hotspot: %s", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "OFFLINE");
+  oled.printf("Hotspot: %s",
+              (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "OFFLINE");
 
   oled.setCursor(2, 36);
   oled.printf("Render : %s", cloudConnected ? "ONLINE (200)" : "CONNECTING");
 
   oled.setCursor(2, 49);
-  oled.printf("Sheets : %s", googleSheetConnected ? "LOGGED OK" : "IDLE / QUEUED");
+  oled.printf("Sheets : %s",
+              googleSheetConnected ? "LOGGED OK" : "IDLE / QUEUED");
 
   oled.setCursor(2, 62);
   oled.printf("AP IP  : 192.168.4.1");
@@ -257,13 +264,22 @@ void drawOLEDPage3() {
 }
 
 void updateOLED() {
-  if (!oledAvailable) return;
+  if (!oledAvailable)
+    return;
 
   switch (oledPage) {
-    case 0: drawOLEDPage1(); break;
-    case 1: drawOLEDPage2(); break;
-    case 2: drawOLEDPage3(); break;
-    default: oledPage = 0; break;
+  case 0:
+    drawOLEDPage1();
+    break;
+  case 1:
+    drawOLEDPage2();
+    break;
+  case 2:
+    drawOLEDPage3();
+    break;
+  default:
+    oledPage = 0;
+    break;
   }
 }
 
@@ -271,12 +287,12 @@ void updateOLED() {
 // 6. DUAL-CORE ASYNCHRONOUS CLOUD TELEMETRY TASK (FREERTOS CORE 0)
 // ==============================================================================
 
-void cloudTelemetryTask(void* pvParameters) {
+void cloudTelemetryTask(void *pvParameters) {
   Serial.printf("[Core %d] Cloud Telemetry Task Started!\n", xPortGetCoreID());
 
   unsigned long lastRenderSend = 0;
   unsigned long lastSheetsSend = 0;
-  unsigned long lastWiFiCheck  = 0;
+  unsigned long lastWiFiCheck = 0;
 
   while (true) {
     unsigned long now = millis();
@@ -298,11 +314,11 @@ void cloudTelemetryTask(void* pvParameters) {
 
         float snapV, snapC, snapP, snapE, snapF, snapPF;
         portENTER_CRITICAL(&telemetryMutex);
-        snapV  = voltage;
-        snapC  = current;
-        snapP  = power;
-        snapE  = energy;
-        snapF  = frequency;
+        snapV = voltage;
+        snapC = current;
+        snapP = power;
+        snapE = energy;
+        snapF = frequency;
         snapPF = pf;
         portEXIT_CRITICAL(&telemetryMutex);
 
@@ -322,14 +338,14 @@ void cloudTelemetryTask(void* pvParameters) {
           StaticJsonDocument<384> doc;
 #endif
           doc["device_id"] = DEVICE_ID;
-          doc["voltage"]   = snapV;
-          doc["current"]   = snapC;
-          doc["power"]     = snapP;
+          doc["voltage"] = snapV;
+          doc["current"] = snapC;
+          doc["power"] = snapP;
           doc["frequency"] = snapF;
-          doc["energy"]    = snapE;
-          doc["pf"]        = snapPF;
-          doc["rssi"]      = WiFi.RSSI();
-          doc["uptime"]    = millis() / 1000;
+          doc["energy"] = snapE;
+          doc["pf"] = snapPF;
+          doc["rssi"] = WiFi.RSSI();
+          doc["uptime"] = millis() / 1000;
 
           String payload;
           serializeJson(doc, payload);
@@ -345,18 +361,19 @@ void cloudTelemetryTask(void* pvParameters) {
         }
       }
 
-      // 3. Optional Direct Google Sheets Webhook Transmission (Every 30 seconds)
+      // 3. Optional Direct Google Sheets Webhook Transmission (Every 30
+      // seconds)
 #if ENABLE_DIRECT_GOOGLE_SHEETS
       if (now - lastSheetsSend >= 30000 && pzemConnected) {
         lastSheetsSend = now;
 
         float snapV, snapC, snapP, snapE, snapF, snapPF;
         portENTER_CRITICAL(&telemetryMutex);
-        snapV  = voltage;
-        snapC  = current;
-        snapP  = power;
-        snapE  = energy;
-        snapF  = frequency;
+        snapV = voltage;
+        snapC = current;
+        snapP = power;
+        snapE = energy;
+        snapF = frequency;
         snapPF = pf;
         portEXIT_CRITICAL(&telemetryMutex);
 
@@ -377,13 +394,13 @@ void cloudTelemetryTask(void* pvParameters) {
           StaticJsonDocument<384> docSheets;
 #endif
           docSheets["device_id"] = DEVICE_ID;
-          docSheets["voltage"]   = snapV;
-          docSheets["current"]   = snapC;
-          docSheets["power"]     = snapP;
+          docSheets["voltage"] = snapV;
+          docSheets["current"] = snapC;
+          docSheets["power"] = snapP;
           docSheets["frequency"] = snapF;
-          docSheets["energy"]    = snapE;
-          docSheets["pf"]        = snapPF;
-          docSheets["status"]    = "ONLINE";
+          docSheets["energy"] = snapE;
+          docSheets["pf"] = snapPF;
+          docSheets["status"] = "ONLINE";
 
           String payloadSheets;
           serializeJson(docSheets, payloadSheets);
@@ -393,7 +410,9 @@ void cloudTelemetryTask(void* pvParameters) {
 
           if (sheetsCode == 200 || sheetsCode == 302) {
             googleSheetConnected = true;
-            Serial.printf("[Direct Sheets] Telemetry logged directly to Google Sheet (HTTP %d)\n", sheetsCode);
+            Serial.printf("[Direct Sheets] Telemetry logged directly to Google "
+                          "Sheet (HTTP %d)\n",
+                          sheetsCode);
           } else {
             googleSheetConnected = false;
           }
@@ -591,20 +610,18 @@ const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-void handleRoot() {
-  server.send(200, "text/html", DASHBOARD_HTML);
-}
+void handleRoot() { server.send(200, "text/html", DASHBOARD_HTML); }
 
 void handleData() {
   float snapV, snapC, snapP, snapE, snapF, snapPF;
   bool snapPzem;
   portENTER_CRITICAL(&telemetryMutex);
-  snapV    = voltage;
-  snapC    = current;
-  snapP    = power;
-  snapE    = energy;
-  snapF    = frequency;
-  snapPF   = pf;
+  snapV = voltage;
+  snapC = current;
+  snapP = power;
+  snapE = energy;
+  snapF = frequency;
+  snapPF = pf;
   snapPzem = pzemConnected;
   portEXIT_CRITICAL(&telemetryMutex);
 
@@ -616,10 +633,14 @@ void handleData() {
   json += "\"frequency\":" + String(snapF, 1) + ",";
   json += "\"pf\":" + String(snapPF, 2) + ",";
   json += "\"pzem\":" + String(snapPzem ? "true" : "false") + ",";
-  json += "\"wifi\":" + String((WiFi.status() == WL_CONNECTED) ? "true" : "false") + ",";
+  json +=
+      "\"wifi\":" + String((WiFi.status() == WL_CONNECTED) ? "true" : "false") +
+      ",";
   json += "\"cloud\":" + String(cloudConnected ? "true" : "false") + ",";
   json += "\"sheets\":" + String(googleSheetConnected ? "true" : "false") + ",";
-  json += "\"rssi\":" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127) + ",";
+  json +=
+      "\"rssi\":" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127) +
+      ",";
   json += "\"uptime\":" + String(millis() / 1000);
   json += "}";
 
@@ -636,7 +657,9 @@ void handleResetEnergy() {
 
   Serial.println("[PZEM] Hardware Cumulative Energy Reset to 0.0000 kWh");
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"PZEM energy counter reset to 0.0000 kWh\"}");
+  server.send(200, "application/json",
+              "{\"status\":\"success\",\"message\":\"PZEM energy counter reset "
+              "to 0.0000 kWh\"}");
 }
 
 // ==============================================================================
@@ -662,10 +685,12 @@ void initializeOLED() {
 }
 
 void initializePZEM() {
-  Serial.println("[PZEM] Initializing Hardware Serial2: RX=GPIO16, TX=GPIO17, Baud=9600");
+  Serial.println(
+      "[PZEM] Initializing Hardware Serial2: RX=GPIO16, TX=GPIO17, Baud=9600");
   Serial2.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);
   delay(150);
-  while (Serial2.available()) Serial2.read();
+  while (Serial2.available())
+    Serial2.read();
 }
 
 // ==============================================================================
@@ -718,21 +743,15 @@ void setup() {
   WiFi.begin(STA_SSID, STA_PASSWORD);
 
   // 8. Spawn Asynchronous Cloud Task on Core 0
-  xTaskCreatePinnedToCore(
-    cloudTelemetryTask,
-    "CloudTask",
-    8192,
-    NULL,
-    1,
-    NULL,
-    0 // Core 0
+  xTaskCreatePinnedToCore(cloudTelemetryTask, "CloudTask", 8192, NULL, 1, NULL,
+                          0 // Core 0
   );
 
   unsigned long now = millis();
-  lastPZEMRead       = now;
-  lastOLEDUpdate     = now;
+  lastPZEMRead = now;
+  lastOLEDUpdate = now;
   lastOLEDPageChange = now;
-  lastSerialDebug    = now;
+  lastSerialDebug = now;
 
   Serial.println("========================================================\n");
 }
@@ -747,7 +766,8 @@ void loop() {
   // 1. Serve Local Web Server requests (<10ms instantaneous response)
   server.handleClient();
 
-  // 2. Read PZEM-004T Sensor Every Second (Zero-delay fast exit if disconnected)
+  // 2. Read PZEM-004T Sensor Every Second (Zero-delay fast exit if
+  // disconnected)
   if (now - lastPZEMRead >= PZEM_INTERVAL) {
     lastPZEMRead = now;
     readPZEM();
