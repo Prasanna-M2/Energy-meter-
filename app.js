@@ -1227,7 +1227,11 @@ async function saveGoogleSheetsConfig() {
     if (json.status === 'success') {
       const iframe = document.getElementById('googleSheetFrame');
       const extLink = document.getElementById('sheetExternalLink');
-      if (iframe && embed_url) iframe.src = embed_url.replace('/edit?usp=sharing', '/edit?embedded=true&rm=minimal');
+      if (iframe && embed_url) {
+        let embedSrc = embed_url.replace('/edit?usp=sharing', '/edit?embedded=true&rm=minimal');
+        if (!embedSrc.includes('gid=')) embedSrc += '&gid=0';
+        iframe.src = embedSrc;
+      }
       if (extLink && embed_url) extLink.href = embed_url;
 
       alert('Configuration saved successfully!');
