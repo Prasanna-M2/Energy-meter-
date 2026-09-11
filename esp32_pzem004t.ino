@@ -1,25 +1,25 @@
 /*
   ==============================================================================
-        ESP32 SMART ENERGY MONITOR - ZERO WHEN DISCONNECTED
+        ESP32 SMART ENERGY MONITOR - REAL-TIME PZEM-004T SENSOR ACTIVE
   ==============================================================================
 
-  Features:
-  1. STRICT ZERO-OUT LOGIC:
-     - When the PZEM sensor or AC supply is DISCONNECTED, ALL values
-       (Voltage, Current, Power, Frequency, PF) immediately drop to EXACTLY 0.0!
-     - Sends 0.0 to Render Cloud, updates Local Dashboard to 0.0, and OLED to 0.0!
-  2. REAL PZEM-004T v3.0 MEASUREMENTS:
+  FEATURES:
+  1. REAL PZEM-004T v3.0 MEASUREMENTS:
      - Real-time AC Voltage (V), Current (A), Active Power (W)
      - Real-time Total Energy (kWh), Frequency (Hz), Power Factor (PF)
-  3. U8g2 SH1106 128x64 OLED Display (Clean margins, zero static noise on edge):
+     - Strict Zero-Out: When AC supply or PZEM is disconnected, values drop to 0.0!
+  2. U8g2 SSD1306 128x64 OLED Display (Rotating Live Pages):
      - Page 1: Live Voltage, Current, Power, Power Factor
-     - Page 2: Total Energy (kWh), Grid Frequency (Hz), Sensor Status
+     - Page 2: Total Energy (kWh), Grid Frequency (Hz), PZEM Health
      - Page 3: Hotspot Status, Render Cloud Status, AP IP
-  4. Simultaneous Wi-Fi AP + STA Mode:
+  3. Simultaneous Wi-Fi AP + STA Mode:
      - STA: Connects to Hotspot ("NYX 3279") to stream to Render Cloud
      - AP: Creates local Access Point ("ESP32-PZEM") for mobile dashboard
-  5. Live Render Cloud Streaming:
+  4. Live Render Cloud Streaming:
+     - Transmits every 5.0 seconds (5000ms) for reliable, non-throttled telemetry
      - Endpoint: https://energy-meter-5jie.onrender.com/api/telemetry
+  5. Local Mobile Web Dashboard:
+     - URL: http://192.168.4.1 (AJAX live updates every 1 second)
 
   HARDWARE WIRING:
   - PZEM TX   -> ESP32 GPIO 16 (Serial2 RX)
@@ -30,6 +30,11 @@
   - OLED SCL  -> ESP32 GPIO 22
   - OLED VCC  -> ESP32 3.3V or 5V
   - OLED GND  -> ESP32 GND
+
+  IMPORTANT:
+  The PZEM-004T optical isolators get 5V from the ESP32, but its internal
+  metering processor is powered from the 230V AC mains line connected
+  to the screw terminals. Turn on AC mains power to receive readings.
   ==============================================================================
 */
 
@@ -43,7 +48,12 @@
 #include <PZEM004Tv30.h>
 
 // ==============================================================================
-// 1. HARDWARE PINS & MODULES
+// 1. DATA SOURCE SELECTION (REAL SENSOR ACTIVE)
+// ==============================================================================
+#define USE_REAL_PZEM true
+
+// ==============================================================================
+// 2. HARDWARE PINS & MODULES
 // ==============================================================================
 
 // OLED I2C Pins
@@ -57,8 +67,9 @@
 
 PZEM004Tv30 pzem(Serial2, PZEM_RX_PIN, PZEM_TX_PIN);
 
-// U8g2 SH1106 Full Buffer Hardware I2C (Clean display without edge noise)
-U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(
+// U8g2 SSD1306 128x64 Full Buffer Hardware I2C
+// (If display has 2-pixel offset on edge, change SSD1306 to SH1106)
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(
   U8G2_R0,
   U8X8_PIN_NONE,
   OLED_SCL_PIN,
@@ -66,7 +77,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(
 );
 
 // ==============================================================================
-// 2. WI-FI & CLOUD CONFIGURATION
+// 3. WI-FI & CLOUD CONFIGURATION
 // ==============================================================================
 
 // Mobile Hotspot to reach Internet & Render Cloud
@@ -84,10 +95,9 @@ const char* DEVICE_ID       = "ESP32-001";
 WebServer server(80);
 
 // ==============================================================================
-// 3. MEASUREMENT VARIABLES & TIMERS (STRICT ZERO DEFAULT)
+// 4. MEASUREMENT VARIABLES & TIMERS
 // ==============================================================================
 
-// All values strictly initialized to 0.0
 float voltage     = 0.0f;
 float current     = 0.0f;
 float power       = 0.0f;
@@ -102,8 +112,9 @@ bool oledAvailable  = false;
 uint8_t oledPage = 0;
 const uint8_t OLED_PAGE_COUNT = 3;
 
+// Telemetry interval: Exactly every 5000ms (5 seconds) as requested
 unsigned long lastCloudSend      = 0;
-const unsigned long CLOUD_INTERVAL = 5000; // Strictly send telemetry to Cloud every 5000ms (5.0s)
+const unsigned long CLOUD_INTERVAL = 5000; // Send telemetry to Render every 5 seconds
 
 unsigned long lastPZEMRead       = 0;
 const unsigned long PZEM_INTERVAL = 1000;  // Read PZEM sensor every 1000ms
@@ -120,7 +131,7 @@ const unsigned long WIFI_CHECK_INTERVAL = 5000;
 unsigned long lastSerialDebug    = 0;
 
 // ==============================================================================
-// 4. REAL PZEM-004T SENSOR ACQUISITION (ZERO-OUT ON DISCONNECT)
+// 5. REAL PZEM-004T SENSOR ACQUISITION (ZERO ON DISCONNECT)
 // ==============================================================================
 
 void readPZEM() {
@@ -131,22 +142,22 @@ void readPZEM() {
   float f = pzem.frequency();
   float factor = pzem.pf();
 
-  // If voltage is a valid number (> 5.0V), the PZEM sensor and AC mains are connected!
+  // If voltage is a valid number (> 5.0V), the PZEM UART communication & AC mains are live!
   if (!isnan(v) && v > 5.0f) {
     voltage       = v;
     current       = (isnan(c) || c < 0.002f) ? 0.0f : c;
     power         = (isnan(p) || p < 0.1f) ? 0.0f : p;
-    energy        = isnan(e) ? energy : e; // Keep accumulated energy
+    energy        = isnan(e) ? energy : e; // Retain cumulative energy
     frequency     = isnan(f) ? 0.0f : f;
     pf            = (isnan(factor) || current < 0.01f || factor < 0.0f) ? 0.0f : factor;
 
     if (!pzemConnected) {
-      Serial.println("\n[PZEM] *** REAL SENSOR CONNECTED & MEASURING AC MAINS ***");
+      Serial.println("\n[PZEM] *** REAL HARDWARE SENSOR CONNECTED & MEASURING AC ***");
     }
     pzemConnected = true;
   } else {
     // =========================================================================
-    // SENSOR OR AC SUPPLY DISCONNECTED: FORCE ALL METRICS TO STRICTLY 0.0!
+    // SUPPLY OR SENSOR DISCONNECTED -> STRICTLY OUTPUT 0.0
     // =========================================================================
     voltage       = 0.0f;
     current       = 0.0f;
@@ -155,7 +166,7 @@ void readPZEM() {
     pf            = 0.0f;
 
     if (pzemConnected) {
-      Serial.println("\n[PZEM] SENSOR OR AC SUPPLY DISCONNECTED -> FORCING ALL METRICS TO 0");
+      Serial.println("\n[PZEM] SUPPLY / SENSOR DISCONNECTED -> VALUES SET TO 0.0");
     }
     pzemConnected = false;
   }
@@ -166,18 +177,18 @@ void printSerialDiagnostics() {
     Serial.printf("[PZEM LIVE] V: %.1f V | I: %.2f A | P: %.1f W | E: %.4f kWh | F: %.1f Hz | PF: %.2f\n",
                   voltage, current, power, energy, frequency, pf);
   } else {
-    Serial.println("[PZEM STATUS] SENSOR DISCONNECTED OR NO AC MAINS -> OUTPUTTING 0.0");
+    Serial.println("[PZEM STATUS] SUPPLY / SENSOR DISCONNECTED -> OUTPUTTING 0.0");
   }
 }
 
 // ============================================================
-// 5. U8G2 OLED DISPLAY PAGES (CLEAN MARGINS)
+// 6. U8G2 OLED DISPLAY PAGES
 // ============================================================
 
 void oledHeader(const char* title) {
   oled.setFont(u8g2_font_6x10_tf);
-  oled.drawStr(4, 9, title);
-  oled.drawHLine(2, 11, 124);
+  oled.drawStr(2, 9, title);
+  oled.drawHLine(0, 11, 128);
 }
 
 // Page 1: Live AC Measurements (V, I, P, PF)
@@ -186,21 +197,21 @@ void drawOLEDPage1() {
   oledHeader("ENERGY MONITOR");
 
   oled.setFont(u8g2_font_6x10_tf);
-  oled.setCursor(4, 24);
+  oled.setCursor(2, 24);
   oled.printf("V : %.1f V", voltage);
 
-  oled.setCursor(4, 37);
+  oled.setCursor(2, 37);
   oled.printf("I : %.2f A", current);
 
-  oled.setCursor(4, 50);
+  oled.setCursor(2, 50);
   oled.printf("P : %.1f W", power);
 
-  oled.setCursor(76, 50);
+  oled.setCursor(75, 50);
   oled.printf("PF %.2f", pf);
 
-  oled.setCursor(4, 63);
+  oled.setCursor(2, 63);
   if (pzemConnected) {
-    oled.print("[PZEM: LIVE HARDWARE]");
+    oled.print("[PZEM: HARDWARE LIVE]");
   } else {
     oled.print("[PZEM: DISCONNECTED 0V]");
   }
@@ -214,13 +225,13 @@ void drawOLEDPage2() {
   oledHeader("GRID & TOTALS");
 
   oled.setFont(u8g2_font_6x10_tf);
-  oled.setCursor(4, 26);
+  oled.setCursor(2, 26);
   oled.printf("Energy: %.4f kWh", energy);
 
-  oled.setCursor(4, 41);
+  oled.setCursor(2, 41);
   oled.printf("Freq  : %.1f Hz", frequency);
 
-  oled.setCursor(4, 57);
+  oled.setCursor(2, 57);
   oled.print("Sensor: ");
   oled.print(pzemConnected ? "CONNECTED" : "DISCONNECTED (0)");
 
@@ -233,16 +244,16 @@ void drawOLEDPage3() {
   oledHeader("NETWORK STATUS");
 
   oled.setFont(u8g2_font_6x10_tf);
-  oled.setCursor(4, 25);
+  oled.setCursor(2, 25);
   oled.printf("Hotspot: %s", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "OFFLINE");
 
-  oled.setCursor(4, 38);
+  oled.setCursor(2, 38);
   oled.printf("Render : %s", cloudConnected ? "ONLINE (200)" : "CONNECTING");
 
-  oled.setCursor(4, 51);
+  oled.setCursor(2, 51);
   oled.printf("AP IP  : 192.168.4.1");
 
-  oled.setCursor(4, 63);
+  oled.setCursor(2, 63);
   oled.printf("Uptime : %lus", millis() / 1000);
 
   oled.sendBuffer();
@@ -260,7 +271,7 @@ void updateOLED() {
 }
 
 // ==============================================================================
-// 6. RENDER CLOUD TELEMETRY TRANSMISSION (STRICT 0 WHEN OFFLINE)
+// 7. RENDER CLOUD TELEMETRY TRANSMISSION (STRICT 5s INTERVAL)
 // ==============================================================================
 
 void sendToRenderCloud() {
@@ -275,7 +286,7 @@ void sendToRenderCloud() {
   HTTPClient http;
   http.setConnectTimeout(4000);
   http.setTimeout(4500);
-  http.setReuse(true); // Reuse TLS socket to prevent connection drops
+  http.setReuse(true); // Keep TLS connection alive to eliminate handshake overhead
 
   if (!http.begin(client, SERVER_ENDPOINT)) {
     cloudConnected = false;
@@ -284,7 +295,7 @@ void sendToRenderCloud() {
 
   http.addHeader("Content-Type", "application/json");
 
-  // Format JSON payload - Transmits exact 0.0 when sensor is disconnected!
+  // Format JSON payload according to backend schema (sends 0.0 when disconnected)
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   JsonDocument doc;
 #else
@@ -309,7 +320,7 @@ void sendToRenderCloud() {
 
   if (httpCode > 0 && httpCode < 400) {
     cloudConnected = true;
-    Serial.printf("[Cloud POST 200] V: %.1fV | I: %.2fA | P: %.1fW | F: %.1fHz\n",
+    Serial.printf("[Cloud POST 200 (5s)] V: %.1fV | I: %.2fA | P: %.1fW | F: %.1fHz\n",
                   voltage, current, power, frequency);
   } else {
     cloudConnected = false;
@@ -318,7 +329,7 @@ void sendToRenderCloud() {
 }
 
 // ==============================================================================
-// 7. LOCAL MOBILE WEB DASHBOARD (http://192.168.4.1)
+// 8. LOCAL MOBILE WEB DASHBOARD (http://192.168.4.1)
 // ==============================================================================
 
 const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
@@ -361,7 +372,7 @@ const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 <body>
   <div class="header">
     <h1>⚡ ESP32 SMART ENERGY MONITOR</h1>
-    <div class="sub">Real PZEM-004T &bull; U8G2 OLED &bull; Render Cloud</div>
+    <div class="sub">Real PZEM-004T &bull; U8G2 OLED &bull; Render Cloud (5s)</div>
   </div>
 
   <div id="status" class="status-bar" style="color: #f59e0b;">
@@ -405,7 +416,7 @@ const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <h2>Hardware &amp; Network Status</h2>
     <div class="panel-row">
       <span>PZEM-004T Sensor</span>
-      <strong id="pzemStatus" class="val-text" style="color:#f59e0b;">CHECKING</strong>
+      <strong id="pzemStatus" class="val-text" style="color:#f59e0b;">INITIALIZING</strong>
     </div>
     <div class="panel-row">
       <span>Hotspot ("NYX 3279")</span>
@@ -447,9 +458,9 @@ const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
           pzemStatus.innerText = "CONNECTED (LIVE)";
           pzemStatus.style.color = "#22c55e";
         } else {
-          status.innerText   = "● SENSOR DISCONNECTED (VALUES ARE 0)";
+          status.innerText   = "● SUPPLY / SENSOR DISCONNECTED (VALUES ARE 0)";
           status.style.color = "#ef4444";
-          pzemStatus.innerText = "DISCONNECTED (0.0 V)";
+          pzemStatus.innerText = "DISCONNECTED (0)";
           pzemStatus.style.color = "#ef4444";
         }
 
@@ -458,8 +469,8 @@ const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         wifi.style.color = d.wifi ? "#22c55e" : "#ef4444";
 
         const cloud = document.getElementById('cloudText');
-        cloud.innerText   = d.cloud ? "ONLINE (STREAMING 0)" : "OFFLINE";
-        cloud.style.color = d.cloud ? "#22c55e" : "#ef4444";
+        cloud.innerText   = d.cloud ? "ONLINE (STREAMING 5s)" : "CONNECTING";
+        cloud.style.color = d.cloud ? "#22c55e" : "#f59e0b";
 
         document.getElementById('rssiText').innerText = d.wifi ? (d.rssi + " dBm") : "--";
       } catch (e) {
@@ -499,7 +510,7 @@ void handleData() {
 }
 
 // ==============================================================================
-// 8. HARDWARE INITIALIZATION
+// 9. HARDWARE INITIALIZATION
 // ==============================================================================
 
 void initializeOLED() {
@@ -516,7 +527,7 @@ void initializeOLED() {
   oled.drawStr(14, 48, "MONITOR");
   oled.sendBuffer();
 
-  Serial.println("[OLED] U8g2 SH1106 initialized on GPIO 21 (SDA) & 22 (SCL)");
+  Serial.println("[OLED] U8g2 SSD1306 initialized on GPIO 21 (SDA) & 22 (SCL)");
   delay(800);
 }
 
@@ -528,7 +539,7 @@ void initializePZEM() {
 }
 
 // ==============================================================================
-// 9. SETUP
+// 10. SETUP
 // ==============================================================================
 
 void setup() {
@@ -536,7 +547,7 @@ void setup() {
   delay(1000);
 
   Serial.println("\n========================================================");
-  Serial.println("   ESP32 SMART ENERGY MONITOR - ZERO WHEN DISCONNECTED  ");
+  Serial.println("   ESP32 SMART ENERGY MONITOR - REAL PZEM SENSOR ACTIVE ");
   Serial.println("========================================================");
 
   // 1. Initialize OLED Display First
@@ -545,13 +556,17 @@ void setup() {
   // 2. Initialize PZEM Serial
   initializePZEM();
 
-  // 3. First read and initial OLED draw (will be strictly 0 if no AC)
+  // 3. First read and initial OLED draw (will strictly be 0.0 if sensor/AC off)
   readPZEM();
   updateOLED();
 
   // 4. Enable Concurrent AP + STA mode
   WiFi.mode(WIFI_AP_STA);
   delay(100);
+
+  // Configure Wi-Fi persistence & auto-reconnect
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
 
   // 5. Start Local Mobile Access Point
   WiFi.softAP(AP_SSID, AP_PASSWORD);
@@ -602,7 +617,7 @@ void setup() {
 }
 
 // ==============================================================================
-// 10. MAIN LOOP (Non-blocking Cooperative Scheduling)
+// 11. MAIN LOOP (Non-blocking Cooperative Scheduling)
 // ==============================================================================
 
 void loop() {
@@ -611,7 +626,7 @@ void loop() {
   // 1. Serve Local Web Server requests
   server.handleClient();
 
-  // 2. Read PZEM-004T Sensor
+  // 2. Read PZEM-004T Sensor Every Second
   if (now - lastPZEMRead >= PZEM_INTERVAL) {
     lastPZEMRead = now;
     readPZEM();
@@ -636,7 +651,7 @@ void loop() {
   }
 
   // 5. Send Telemetry directly to Render Cloud Every 5.0 seconds
-  // (Sends 0.0 when sensor or supply is disconnected so Render & Google Sheets show 0!)
+  // (Transmits 0.0 when disconnected so Render & Google Sheets show 0!)
   if (now - lastCloudSend >= CLOUD_INTERVAL) {
     lastCloudSend = now;
     sendToRenderCloud();
