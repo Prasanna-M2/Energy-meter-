@@ -3,13 +3,15 @@
  * ESP32 Real-Time Energy Monitor - Google Apps Script Webhook (Top-Row Ingestion)
  * ==============================================================================
  * Features:
- * 1. Inserts new readings directly at ROW 2 (Top of sheet, right under the headers):
+ * 1. Safe Sheet Targeter: Exclusively targets normal GRID sheets (Sheet1), NEVER crashes
+ *    on OBJECT/Canvas/Dashboard sheets.
+ * 2. Inserts new readings directly at ROW 2 (Top of sheet, right under the headers):
  *    - Newest readings are immediately visible without scrolling down thousands of rows!
- * 2. Matches exact spreadsheet column layout:
+ * 3. Matches exact spreadsheet column layout:
  *    Col A: Timestamp | Col B: Voltage (V) | Col C: Current (A) | Col D: Power (W)
  *    Col E: Energy (kWh) | Col F: Frequency (Hz) | Col G: Power Factor | Col H: Device ID | Col I: Status
- * 3. Bi-directional API: logs via POST, reads/shares records via GET
- * 4. Automatic cleanup endpoint (?action=cleanup) to remove old blank rows
+ * 4. Bi-directional API: logs via POST, reads/shares records via GET
+ * 5. Automatic cleanup endpoint (?action=cleanup) to remove old blank rows
  * ==============================================================================
  */
 
@@ -27,18 +29,49 @@ var HEADERS = [
 
 function getTargetSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Sheet1") || ss.getActiveSheet();
 
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADERS);
-    var headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
+  // 1. First pass: look for a normal GRID sheet named "Sheet1" (case-insensitive & trimmed)
+  var allSheets = ss.getSheets();
+  var targetSheet = null;
+
+  for (var i = 0; i < allSheets.length; i++) {
+    var s = allSheets[i];
+    if (s.getType() === SpreadsheetApp.SheetType.GRID) {
+      var name = s.getName().trim().toLowerCase();
+      if (name === "sheet1" || name === "sheet 1") {
+        targetSheet = s;
+        break;
+      }
+    }
+  }
+
+  // 2. Second pass: if no Sheet1 found, pick the first GRID sheet
+  if (!targetSheet) {
+    for (var j = 0; j < allSheets.length; j++) {
+      if (allSheets[j].getType() === SpreadsheetApp.SheetType.GRID) {
+        targetSheet = allSheets[j];
+        break;
+      }
+    }
+  }
+
+  // 3. Third pass: if no GRID sheet exists, insert one
+  if (!targetSheet) {
+    targetSheet = ss.insertSheet("Sheet1");
+  }
+
+  // Ensure headers exist
+  if (targetSheet.getLastRow() === 0) {
+    targetSheet.appendRow(HEADERS);
+    var headerRange = targetSheet.getRange(1, 1, 1, HEADERS.length);
     headerRange.setFontWeight("bold");
     headerRange.setBackground("#1e293b");
     headerRange.setFontColor("#38bdf8");
     headerRange.setHorizontalAlignment("center");
-    sheet.setFrozenRows(1);
+    targetSheet.setFrozenRows(1);
   }
-  return sheet;
+
+  return targetSheet;
 }
 
 // ------------------------------------------------------------------------------
@@ -125,6 +158,7 @@ function doGet(e) {
       return ContentService.createTextOutput(JSON.stringify({
         "result": "success",
         "message": "PulseIoT ESP32 Google Sheet Webhook is Active!",
+        "sheet_name": sheet.getName(),
         "total_rows": sheet.getLastRow(),
         "timestamp": new Date().toISOString()
       })).setMimeType(ContentService.MimeType.JSON);
@@ -187,3 +221,51 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }
+
+// ------------------------------------------------------------------------------
+// One-Click Graphical Chart Builder in Google Sheets
+// ------------------------------------------------------------------------------
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu("⚡ Energy Monitor")
+    .addItem("📊 Create Telemetry Chart", "createTelemetryChart")
+    .addItem("🧹 Clean Up Blank Rows", "cleanupRowsMenu")
+    .addToUi();
+}
+
+function createTelemetryChart() {
+  var sheet = getTargetSheet();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    SpreadsheetApp.getUi().alert("No data rows available yet to plot a chart.");
+    return;
+  }
+
+  // Use Timestamp (Col A), Voltage (Col B), Current (Col C), and Power (Col D)
+  var range = sheet.getRange("A1:D" + lastRow);
+
+  var chart = sheet.newChart()
+    .asLineChart()
+    .addRange(range)
+    .setPosition(2, 11, 0, 0) // Position chart at Column K, Row 2 (right beside data)
+    .setTitle("ESP32 Telemetry Trends (Power, Voltage & Current)")
+    .setXAxisTitle("Timestamp")
+    .setOption("curveType", "function")
+    .setOption("legend", { position: "top" })
+    .setOption("width", 850)
+    .setOption("height", 450)
+    .build();
+
+  sheet.insertChart(chart);
+  SpreadsheetApp.getUi().alert("Chart created successfully! Look at Column K next to your data table.");
+}
+
+function cleanupRowsMenu() {
+  var sheet = getTargetSheet();
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 2) {
+    sheet.deleteRows(3, lastRow - 2);
+    SpreadsheetApp.getUi().alert("Old rows cleaned up! All new readings appear at Row 2.");
+  }
+}
+

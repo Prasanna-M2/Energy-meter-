@@ -1,0 +1,9 @@
+If:
+  PathMatch: .*\.ino
+CompileFlags:
+  Add:
+    - "-x"
+    - "c++"
+Diagnostics:
+  Suppress:
+    - "pp_file_not_found"
