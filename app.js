@@ -158,6 +158,10 @@ function switchTab(tabId, btn) {
 
   if (tabId === 'historyTab') {
     fetchHistoryRange('7d');
+  } else if (tabId === 'aiTab') {
+    if (!window.aiState || !window.aiState.latestAnalysis) {
+      if (window.runAiAnalysis) window.runAiAnalysis(false);
+    }
   } else if (tabId === 'sheetTab') {
     if (!state.sheetChart) {
       setTimeout(initSheetAnalyticsChart, 50);
@@ -878,6 +882,7 @@ function pushTelemetryToUI(data) {
   if (elPfp) elPfp.textContent = Math.round(pf * 100);
 
   updateScopeHud();
+  if (window.updateLiveLoadConditionBanner) window.updateLiveLoadConditionBanner(data);
 
   // Chart update: Strictly retain ONLY the last 15 seconds
   if (state.liveChart && state.waveformDisplayMode === 'trend') {
@@ -1547,4 +1552,415 @@ window.syncFromGoogleSheets = async function() {
     alert('Sync error: ' + e.message);
   }
 };
+
+// ==============================================================================
+// 10. AI LOAD CONDITION DIAGNOSTICS & COPILOT CHATBOT (OpenRouter GPT-4o-mini)
+// ==============================================================================
+
+window.aiState = {
+  isAnalyzing: false,
+  isChatting: false,
+  chatHistory: [],
+  drawerChatHistory: [],
+  latestAnalysis: null,
+  lastAnalysisTime: 0
+};
+
+// Markdown helper to turn bold, bullet points, and newlines into clean HTML
+function formatAiText(text) {
+  if (!text) return '';
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n•\s*(.*?)(?=\n|$)/g, '<br>• $1')
+    .replace(/\n-\s*(.*?)(?=\n|$)/g, '<br>• $1')
+    .replace(/\n/g, '<br>');
+  return html;
+}
+
+// 1. Real-Time Load Condition Banner & HUD Updates
+window.updateLiveLoadConditionBanner = function(data) {
+  if (!data) return;
+  const v = Number(data.voltage) || state.vRms || 0;
+  const i = Number(data.current) || state.iRms || 0;
+  const p = Number(data.power) || state.pWatts || 0;
+  const pf = Number(data.pf) || state.pf || 0;
+  const f = Number(data.frequency) || state.freq || 50;
+
+  const apparentPower = Math.round(v * i * 10) / 10;
+  const reactivePower = Math.round(Math.sqrt(Math.max(0, (apparentPower * apparentPower) - (p * p))) * 10) / 10;
+
+  let condition = 'STANDBY / IDLE';
+  let category = 'Standby';
+  let badgeClass = 'badge-ai';
+  let grade = 'A+';
+  let desc = 'Monitored circuit is currently in standby mode with zero active draw.';
+
+  if (v <= 5.0) {
+    condition = 'SENSOR DISCONNECTED';
+    category = 'Offline';
+    badgeClass = 'badge-ai';
+    grade = 'N/A';
+    desc = 'PZEM-004T CT clamp or voltage sensor is disconnected (0V AC measured).';
+  } else if (p < 5 || i < 0.05) {
+    condition = 'STANDBY / ZERO LOAD';
+    category = 'Standby';
+    badgeClass = 'badge-ai';
+    grade = 'A+';
+    desc = 'Circuit voltage is 230V AC ready, but no electrical load is currently active.';
+  } else if (i > 12.0 || p > 2500) {
+    condition = 'CRITICAL OVERLOAD DANGER';
+    category = 'Overload Risk';
+    badgeClass = 'badge-ai overload';
+    grade = 'Critical';
+    desc = `High current draw (${i.toFixed(2)}A / ${p.toFixed(0)}W). Conductor thermal stress warning!`;
+  } else if (v < 200.0) {
+    condition = 'UNDERVOLTAGE SAG';
+    category = 'Poor Grid Stability';
+    badgeClass = 'badge-ai overload';
+    grade = 'B';
+    desc = `Grid voltage has dropped to ${v.toFixed(1)}V AC. Inductive motors may overheat.`;
+  } else if (pf >= 0.95) {
+    condition = 'OPTIMAL RESISTIVE LOAD';
+    category = 'Resistive (Unity PF)';
+    badgeClass = 'badge-ai optimal';
+    grade = 'A+';
+    desc = `Resistive load drawing ${p.toFixed(0)}W with near-unity power factor (${pf.toFixed(2)}). Minimal line loss.`;
+  } else if (pf >= 0.85) {
+    condition = 'HEALTHY INDUSTRIAL LOAD';
+    category = 'Mixed / Mild Inductive';
+    badgeClass = 'badge-ai optimal';
+    grade = 'A';
+    desc = `Normal industrial load drawing ${p.toFixed(0)}W at ${pf.toFixed(2)} PF. Safe operating margins.`;
+  } else if (pf >= 0.70) {
+    condition = 'INDUCTIVE LOAD - MODERATE PF LOSS';
+    category = 'Inductive (Motors / Chokes)';
+    badgeClass = 'badge-ai inductive';
+    grade = 'B';
+    desc = `Inductive motor/compressor load creating ${reactivePower} VAR reactive burden. Consider APFC capacitor bank.`;
+  } else {
+    condition = 'LOW POWER FACTOR PENALTY RISK';
+    category = 'Heavy Reactive / Distorted';
+    badgeClass = 'badge-ai inductive';
+    grade = 'C';
+    desc = `Severe reactive draw with low PF (${pf.toFixed(2)}). Incurs utility penalties and line heating.`;
+  }
+
+  // Update Live Banner in Tab 1
+  const bBadge = document.getElementById('liveLoadConditionBadge');
+  const bGrade = document.getElementById('liveEfficiencyGrade');
+  const bDesc = document.getElementById('liveLoadConditionDesc');
+  const drawerStatus = document.getElementById('drawerLoadStatus');
+
+  if (bBadge) {
+    bBadge.className = badgeClass;
+    bBadge.textContent = condition;
+  }
+  if (bGrade) {
+    bGrade.textContent = `GRADE: ${grade}`;
+    if (grade === 'A+' || grade === 'A') {
+      bGrade.style.color = '#00e676';
+      bGrade.style.background = 'rgba(0, 230, 118, 0.15)';
+    } else if (grade === 'B') {
+      bGrade.style.color = '#f59e0b';
+      bGrade.style.background = 'rgba(245, 158, 11, 0.15)';
+    } else {
+      bGrade.style.color = '#ef4444';
+      bGrade.style.background = 'rgba(239, 68, 68, 0.15)';
+    }
+  }
+  if (bDesc) bDesc.textContent = desc;
+  if (drawerStatus) {
+    drawerStatus.textContent = condition;
+    drawerStatus.style.color = (grade === 'A+' || grade === 'A') ? '#00e676' : ((grade === 'B') ? '#f59e0b' : '#ef4444');
+  }
+
+  // Live parameters inside Tab 3 (AI Studio)
+  const pP = document.getElementById('aiParamP');
+  const pS = document.getElementById('aiParamS');
+  const pQ = document.getElementById('aiParamQ');
+  const pPf = document.getElementById('aiParamPF');
+  if (pP) pP.textContent = `${p.toFixed(1)} W`;
+  if (pS) pS.textContent = `${apparentPower.toFixed(1)} VA`;
+  if (pQ) pQ.textContent = `${reactivePower.toFixed(1)} VAR`;
+  if (pPf) pPf.textContent = pf.toFixed(2);
+};
+
+// 2. Run Deep AI Analysis via OpenRouter
+window.runAiAnalysis = async function(force = false) {
+  const now = Date.now();
+  if (window.aiState.isAnalyzing) return;
+  if (!force && (now - window.aiState.lastAnalysisTime < 6000)) return;
+
+  window.aiState.isAnalyzing = true;
+  window.aiState.lastAnalysisTime = now;
+
+  const icon1 = document.getElementById('aiRefreshIcon');
+  const icon2 = document.getElementById('aiTabRefreshIcon');
+  if (icon1) icon1.classList.add('animate-spin');
+  if (icon2) icon2.classList.add('animate-spin');
+
+  const liveTelemetry = {
+    voltage: state.vRms || 0,
+    current: state.iRms || 0,
+    power: state.pWatts || 0,
+    frequency: state.freq || 50,
+    pf: state.pf || 0,
+    energy: state.cumulativeEnergy || 0
+  };
+
+  try {
+    const res = await fetch('/api/ai/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telemetry: liveTelemetry })
+    });
+    const result = await res.json();
+    if (result.status === 'success' && result.analysis) {
+      window.aiState.latestAnalysis = result.analysis;
+      renderAiAnalysisResults(result.analysis, result.metrics);
+    }
+  } catch (err) {
+    console.warn('[AI Analysis Error]:', err);
+  } finally {
+    window.aiState.isAnalyzing = false;
+    if (icon1) icon1.classList.remove('animate-spin');
+    if (icon2) icon2.classList.remove('animate-spin');
+  }
+};
+
+function renderAiAnalysisResults(analysis, metrics) {
+  const heading = document.getElementById('aiConditionHeading');
+  const catPill = document.getElementById('aiCategoryPill');
+  const gradeBadge = document.getElementById('aiCardGradeBadge');
+  const scoreNum = document.getElementById('aiScoreNumber');
+  const scoreCircle = document.getElementById('aiScoreCircle');
+  const thermalBadge = document.getElementById('aiThermalBadge');
+  const gridBadge = document.getElementById('aiGridBadge');
+  const summaryBox = document.getElementById('aiSummaryBox');
+  const detectedLoad = document.getElementById('aiDetectedLoad');
+  const recList = document.getElementById('aiRecommendationsList');
+  const pKwh = document.getElementById('aiParamKwh');
+  const pBill = document.getElementById('aiParamBill');
+
+  const score = analysis.health_score !== undefined ? analysis.health_score : 90;
+  const grade = analysis.efficiency_rating || 'A';
+
+  if (heading) heading.textContent = analysis.load_condition || 'LOAD OPERATING NORMALLY';
+  if (catPill) catPill.textContent = analysis.load_category || 'General AC Load';
+  if (gradeBadge) gradeBadge.textContent = `${grade} RATING`;
+
+  if (scoreNum) {
+    scoreNum.textContent = score;
+    scoreNum.style.color = score >= 85 ? '#00e676' : (score >= 65 ? '#f59e0b' : '#ef4444');
+  }
+  if (scoreCircle) {
+    scoreCircle.style.setProperty('--score-angle', `${Math.round(score * 3.6)}deg`);
+    scoreCircle.style.background = `conic-gradient(${score >= 85 ? '#00e676' : (score >= 65 ? '#f59e0b' : '#ef4444')} ${Math.round(score * 3.6)}deg, var(--border-color) 0deg)`;
+  }
+
+  if (thermalBadge) {
+    thermalBadge.textContent = `Thermal: ${analysis.thermal_risk || 'LOW'}`;
+    thermalBadge.style.color = analysis.thermal_risk === 'HIGH' ? '#ef4444' : (analysis.thermal_risk === 'MODERATE' ? '#f59e0b' : '#00e676');
+  }
+  if (gridBadge) {
+    gridBadge.textContent = `Grid: ${analysis.grid_stability || 'STABLE'}`;
+    gridBadge.style.color = analysis.grid_stability === 'STABLE' ? '#3b82f6' : '#ef4444';
+  }
+
+  if (summaryBox) {
+    summaryBox.innerHTML = formatAiText(analysis.summary || 'Load analysis completed successfully.');
+  }
+  if (detectedLoad) {
+    detectedLoad.textContent = analysis.load_type_detected || 'Standard single-phase appliance load';
+  }
+
+  if (recList && Array.isArray(analysis.recommendations)) {
+    recList.innerHTML = analysis.recommendations.map(r => `
+      <li><i data-lucide="check-circle-2"></i> <span>${formatAiText(r)}</span></li>
+    `).join('');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  if (pKwh) pKwh.textContent = `${analysis.projected_kwh_monthly || 0} kWh`;
+  if (pBill) pBill.textContent = `₹ ${(analysis.projected_cost_monthly_inr || 0).toLocaleString('en-IN')}`;
+}
+
+// 3. Interactive AI Copilot Chat (Tab Studio & Floating Drawer)
+window.sendAiChatMessage = async function(customText = null) {
+  const input = document.getElementById('aiChatInput');
+  const text = (customText || (input ? input.value : '')).trim();
+  if (!text) return;
+  if (input) input.value = '';
+
+  appendChatMessage('user', text, 'aiChatMessages');
+  const typingId = appendTypingIndicator('aiChatMessages');
+
+  try {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: window.aiState.chatHistory
+      })
+    });
+    const data = await res.json();
+    removeTypingIndicator(typingId);
+
+    if (data.status === 'success' && data.reply) {
+      appendChatMessage('ai', data.reply, 'aiChatMessages', data.snapshot);
+      window.aiState.chatHistory.push({ role: 'user', content: text });
+      window.aiState.chatHistory.push({ role: 'assistant', content: data.reply });
+      if (window.aiState.chatHistory.length > 12) window.aiState.chatHistory = window.aiState.chatHistory.slice(-12);
+    } else {
+      appendChatMessage('ai', '⚠️ Failed to receive response from AI engine. Please retry.', 'aiChatMessages');
+    }
+  } catch (err) {
+    removeTypingIndicator(typingId);
+    appendChatMessage('ai', `⚠️ Network error: ${err.message}`, 'aiChatMessages');
+  }
+};
+
+window.sendDrawerChatMessage = async function(customText = null) {
+  const input = document.getElementById('drawerChatInput');
+  const text = (customText || (input ? input.value : '')).trim();
+  if (!text) return;
+  if (input) input.value = '';
+
+  appendChatMessage('user', text, 'drawerChatMessages');
+  const typingId = appendTypingIndicator('drawerChatMessages');
+
+  try {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: window.aiState.drawerChatHistory
+      })
+    });
+    const data = await res.json();
+    removeTypingIndicator(typingId);
+
+    if (data.status === 'success' && data.reply) {
+      appendChatMessage('ai', data.reply, 'drawerChatMessages', data.snapshot);
+      window.aiState.drawerChatHistory.push({ role: 'user', content: text });
+      window.aiState.drawerChatHistory.push({ role: 'assistant', content: data.reply });
+    } else {
+      appendChatMessage('ai', '⚠️ Failed to receive response from AI copilot.', 'drawerChatMessages');
+    }
+  } catch (err) {
+    removeTypingIndicator(typingId);
+    appendChatMessage('ai', `⚠️ Connection error: ${err.message}`, 'drawerChatMessages');
+  }
+};
+
+function appendChatMessage(role, text, containerId, snapshot = null) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble chat-bubble-${role}`;
+
+  const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  let snapshotHtml = '';
+  if (snapshot && role === 'ai') {
+    snapshotHtml = `<div style="font-size:0.7rem; color:var(--primary-cyan); font-family:var(--font-mono); margin-bottom:6px; padding:3px 6px; background:rgba(0,242,254,0.08); border-radius:4px; display:inline-block;">⚡ Telemetry: ${snapshot.power}W | ${snapshot.voltage}V | PF ${snapshot.pf} (${snapshot.condition})</div>`;
+  }
+
+  bubble.innerHTML = `
+    ${snapshotHtml}
+    <div>${formatAiText(text)}</div>
+    <div class="chat-time">${timeStr}</div>
+  `;
+
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendTypingIndicator(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return null;
+  const id = 'typing_' + Date.now();
+  const bubble = document.createElement('div');
+  bubble.id = id;
+  bubble.className = 'chat-bubble chat-bubble-ai';
+  bubble.style.opacity = '0.75';
+  bubble.innerHTML = `
+    <div style="display:flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:0.8rem;">
+      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#a855f7; animation:pulse 1s infinite;"></span>
+      <span>AI Copilot evaluating load condition...</span>
+    </div>
+  `;
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
+
+function removeTypingIndicator(id) {
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+window.insertQuickPrompt = function(promptText) {
+  sendAiChatMessage(promptText);
+};
+
+window.insertDrawerPrompt = function(promptText) {
+  sendDrawerChatMessage(promptText);
+};
+
+window.handleChatKeyDown = function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendAiChatMessage();
+  }
+};
+
+window.handleDrawerKeyDown = function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendDrawerChatMessage();
+  }
+};
+
+window.clearAiChat = function() {
+  window.aiState.chatHistory = [];
+  const container = document.getElementById('aiChatMessages');
+  if (container) {
+    container.innerHTML = `
+      <div class="chat-bubble chat-bubble-ai">
+        <div><strong>👋 Welcome to the KSRCT EEE Energy Copilot!</strong></div>
+        <div style="margin-top:6px;">
+          Chat history cleared. Live telemetry stream is connected. What would you like to analyze about the load?
+        </div>
+        <div class="chat-time">Just now</div>
+      </div>
+    `;
+  }
+};
+
+// 4. Slide-out Drawer Controls
+window.openAiChatDrawer = function() {
+  const drawer = document.getElementById('aiDrawer');
+  const overlay = document.getElementById('aiDrawerOverlay');
+  if (drawer) drawer.classList.add('open');
+  if (overlay) overlay.classList.add('open');
+  if (window.lucide) lucide.createIcons();
+};
+
+window.closeAiChatDrawer = function() {
+  const drawer = document.getElementById('aiDrawer');
+  const overlay = document.getElementById('aiDrawerOverlay');
+  if (drawer) drawer.classList.remove('open');
+  if (overlay) overlay.classList.remove('open');
+};
+
 

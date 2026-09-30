@@ -702,113 +702,410 @@ app.get('/api/sheets/sync', async (req, res) => {
 });
 
 // ==============================================================================
-// GOOGLE GEMINI PRO AI ENGINE ROUTE
+// OPENROUTER AI ENGINE (openai/gpt-4o-mini) - LOAD CONDITION & COPILOT
 // ==============================================================================
-app.get('/api/ai/insights', async (req, res) => {
-  const apiKey = process.env.GEMINI_API_KEY || '';
-  if (!apiKey || apiKey.includes('YOUR_GEMINI')) {
-    const liveData = deviceState.latestData || { voltage: 230.0, current: 2.1, power: 483.0, frequency: 50.0, pf: 0.98, energy: 5.4 };
-    return res.json({
-      status: 'ready',
-      provider: 'Google Gemini Pro AI Engine',
-      analysis: {
-        efficiency_rating: liveData.pf >= 0.95 ? 'A+' : (liveData.pf >= 0.85 ? 'B' : 'C'),
-        anomaly_detected: liveData.voltage < 200 || liveData.voltage > 250,
-        summary: `Google Gemini Pro Engine Analyzed Live Load: ${liveData.power}W active power draw at ${liveData.voltage}V AC. Grid power factor is ${liveData.pf}.`,
-        recommendations: [
-          'Maintain balanced inductive loads to protect PZEM-004T power factor.',
-          'Grid voltage fluctuations are within normal operating tolerances.'
-        ],
-        monthly_forecast_kwh: ((liveData.power * 24 * 30) / 1000).toFixed(1)
-      }
-    });
+
+function getAiConfig() {
+  let conf = {
+    provider: process.env.AI_PROVIDER || 'openrouter',
+    apiKey: process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY || '',
+    model: process.env.AI_MODEL || 'openai/gpt-4o-mini'
+  };
+  try {
+    const configPath = path.join(__dirname, 'data', 'config.json');
+    if (fs.existsSync(configPath)) {
+      const fileData = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (fileData.aiApiKey) conf.apiKey = fileData.aiApiKey;
+      if (fileData.aiModel) conf.model = fileData.aiModel;
+      if (fileData.aiProvider) conf.provider = fileData.aiProvider;
+    }
+  } catch (e) {
+    console.warn('[AI Config] Read error:', e.message);
+  }
+  return conf;
+}
+
+// Call OpenRouter API with fallback
+async function callOpenRouter(messages, temperature = 0.4, maxTokens = 600) {
+  const { apiKey, model } = getAiConfig();
+  if (!apiKey) {
+    throw new Error('OpenRouter API key is not configured in data/config.json or .env');
   }
 
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': 'http://localhost:3000',
+      'X-Title': 'KSRCT EEE Energy Monitor'
+    },
+    body: JSON.stringify({
+      model: model || 'openai/gpt-4o-mini',
+      messages,
+      temperature,
+      max_tokens: maxTokens
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenRouter HTTP ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new Error('Empty response received from OpenRouter');
+  }
+  return text;
+}
+
+// AI Engine Configuration / Status Route
+app.get('/api/ai/config', (req, res) => {
+  const conf = getAiConfig();
+  res.json({
+    status: 'active',
+    provider: conf.provider,
+    model: conf.model,
+    hasApiKey: !!conf.apiKey,
+    engine: 'OpenRouter Industrial Power & Load Condition AI Engine',
+    features: [
+      'Realtime Load Condition Diagnosis (Resistive / Inductive / Distortion)',
+      'Power Factor & Reactive Burden Assessment',
+      'Overload & Thermal Stress Detection',
+      'Voltage Sag & Swell Grid Quality Alerts',
+      'Interactive Electrical Engineering Copilot'
+    ]
+  });
+});
+
+// Deterministic rule-based load condition evaluator (used as baseline & fallback)
+function evaluateLoadConditionMetrics(data) {
+  const v = Number(data.voltage) || 0;
+  const i = Number(data.current) || 0;
+  const p = Number(data.power) || 0;
+  const pf = Number(data.pf) || 0;
+  const f = Number(data.frequency) || 50.0;
+  const apparentPower = Math.round(v * i * 10) / 10;
+  const reactivePower = Math.round(Math.sqrt(Math.max(0, (apparentPower * apparentPower) - (p * p))) * 10) / 10;
+
+  let condition = 'NORMAL';
+  let category = 'Resistive';
+  let thermalRisk = 'LOW';
+  let gridStability = 'STABLE';
+  let efficiencyGrade = 'A+';
+  let healthScore = 95;
+
+  if (v < 10) {
+    condition = 'SENSOR DISCONNECTED';
+    category = 'Offline';
+    efficiencyGrade = 'N/A';
+    healthScore = 0;
+  } else if (p < 5 || i < 0.05) {
+    condition = 'STANDBY / IDLE';
+    category = 'Standby';
+    efficiencyGrade = 'A';
+    healthScore = 100;
+  } else {
+    // Determine category based on power factor and current
+    if (pf >= 0.95) {
+      category = 'Resistive (Heater / Incandescent / Unity PF)';
+      condition = 'OPTIMAL RESISTIVE LOAD';
+      efficiencyGrade = 'A+';
+      healthScore = 98;
+    } else if (pf >= 0.85) {
+      category = 'Mixed / Mild Inductive Load';
+      condition = 'HEALTHY INDUSTRIAL LOAD';
+      efficiencyGrade = 'A';
+      healthScore = 90;
+    } else if (pf >= 0.70) {
+      category = 'Inductive Load (Motor / Compressor / Choke)';
+      condition = 'INDUCTIVE LOAD - MODERATE PF LOSS';
+      efficiencyGrade = 'B';
+      healthScore = 75;
+    } else {
+      category = 'Heavy Reactive / Distorted Load';
+      condition = 'LOW POWER FACTOR PENALTY RISK';
+      efficiencyGrade = 'C';
+      healthScore = 55;
+    }
+
+    // Overload checks
+    if (i > 15 || p > 3000) {
+      condition = 'CRITICAL OVERLOAD DANGER';
+      thermalRisk = 'HIGH';
+      efficiencyGrade = 'Critical';
+      healthScore = Math.min(healthScore, 30);
+    } else if (i > 10 || p > 2200) {
+      condition = 'HIGH LOAD WARNING';
+      thermalRisk = 'MODERATE';
+      efficiencyGrade = 'B';
+      healthScore = Math.min(healthScore, 65);
+    }
+
+    // Voltage quality checks (Nominal: 230V ± 10% -> 207V to 253V)
+    if (v < 200) {
+      gridStability = 'UNDERVOLTAGE SAG';
+      healthScore = Math.max(20, healthScore - 25);
+    } else if (v > 250) {
+      gridStability = 'OVERVOLTAGE SURGE';
+      healthScore = Math.max(20, healthScore - 20);
+    }
+
+    // Frequency stability check (Nominal: 50Hz ± 0.5Hz)
+    if (Math.abs(f - 50.0) > 0.5) {
+      gridStability = gridStability === 'STABLE' ? 'FREQUENCY FLUCTUATION' : gridStability + ' & FREQ DRIFT';
+    }
+  }
+
+  return {
+    v, i, p, pf, f,
+    apparentPower,
+    reactivePower,
+    condition,
+    category,
+    thermalRisk,
+    gridStability,
+    efficiencyGrade,
+    healthScore
+  };
+}
+
+// AI Analyze Load Route (OpenRouter GPT-4o-mini + Load Condition Telemetry)
+app.post('/api/ai/analyze', async (req, res) => {
+  const currentData = req.body?.telemetry || deviceState.latestData || {
+    voltage: 230.0,
+    current: 0.0,
+    power: 0.0,
+    frequency: 50.0,
+    pf: 0.0,
+    energy: 0.0
+  };
+
+  const metrics = evaluateLoadConditionMetrics(currentData);
 
   try {
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-3.8-flash' });
+    const systemPrompt = `You are a Principal Electrical Power Quality and Energy Auditor at KSRCT Department of EEE.
+Analyze the electrical load telemetry from an ESP32 PZEM-004T monitor.
+Return a STRICT JSON object only (no markdown code fence, no additional commentary) with this exact schema:
+{
+  "load_condition": "${metrics.condition}",
+  "load_category": "Resistive | Inductive (Motors) | Heavy Reactive | Standby | Overload",
+  "health_score": ${metrics.healthScore},
+  "efficiency_rating": "${metrics.efficiencyGrade}",
+  "thermal_risk": "${metrics.thermalRisk}",
+  "grid_stability": "${metrics.gridStability}",
+  "apparent_power_va": ${metrics.apparentPower},
+  "reactive_power_var": ${metrics.reactivePower},
+  "summary": "2-3 concise sentences diagnosing the exact load state, power factor efficiency, and load safety.",
+  "load_type_detected": "Briefly describe likely connected appliances/equipment based on V, I, P, PF (e.g. Induction Motor, Resistive Heater, LED SMPS bank, etc.)",
+  "recommendations": [
+    "Specific engineering advice 1",
+    "Specific engineering advice 2",
+    "Specific engineering advice 3"
+  ],
+  "projected_cost_monthly_inr": 0,
+  "projected_kwh_monthly": 0
+}`;
 
-    const currentData = deviceState.latestData || { voltage: 230, current: 2, power: 460, frequency: 50, pf: 0.98, energy: 5.2 };
-    const prompt = `You are an expert industrial energy analyst. Analyze this ESP32 telemetry: ${JSON.stringify(currentData)}. Return pure JSON: {"efficiency_rating":"A+","anomaly_detected":false,"summary":"...","recommendations":["..."],"monthly_forecast_kwh":150.0}`;
+    const userPrompt = `Live Telemetry Snapshot:
+- Voltage: ${metrics.v} V AC (Nominal 230V)
+- Current: ${metrics.i} A RMS
+- Active Power: ${metrics.p} W
+- Power Factor: ${metrics.pf}
+- Frequency: ${metrics.f} Hz
+- Apparent Power: ${metrics.apparentPower} VA
+- Calculated Reactive Power: ${metrics.reactivePower} VAR
+- Energy Consumed so far: ${currentData.energy || 0} kWh
+- Hardware Device: ${deviceState.deviceId} (Status: ${deviceState.online ? 'Online' : 'Standby'})
 
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+Provide full electrical load diagnosis and practical energy optimization advice.`;
+
+    const rawReply = await callOpenRouter([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], 0.2, 700);
+
     let parsed;
-    res.json({
+    try {
+      const cleanJson = rawReply.replace(/```json/gi, '').replace(/```/g, '').trim();
+      parsed = JSON.parse(cleanJson);
+    } catch (parseErr) {
+      console.warn('[AI Analyze] JSON parse warning, falling back to structured wrapper');
+      parsed = {
+        load_condition: metrics.condition,
+        load_category: metrics.category,
+        health_score: metrics.healthScore,
+        efficiency_rating: metrics.efficiencyGrade,
+        thermal_risk: metrics.thermalRisk,
+        grid_stability: metrics.gridStability,
+        apparent_power_va: metrics.apparentPower,
+        reactive_power_var: metrics.reactivePower,
+        summary: rawReply.slice(0, 300),
+        load_type_detected: metrics.category,
+        recommendations: [
+          'Maintain balanced load current below rated breaker thresholds.',
+          'Verify power factor correction capacitors if inductive loads are active.'
+        ]
+      };
+    }
+
+    // Ensure numeric projections
+    const monthlyKwh = Number(((metrics.p * 24 * 30) / 1000).toFixed(2));
+    const monthlyCost = Math.round(monthlyKwh * 8.5); // Approx INR 8.5 / kWh
+    parsed.projected_kwh_monthly = parsed.projected_kwh_monthly || monthlyKwh;
+    parsed.projected_cost_monthly_inr = parsed.projected_cost_monthly_inr || monthlyCost;
+
+    return res.json({
       status: 'success',
-      provider: 'Google Gemini Pro AI Engine',
+      provider: 'OpenRouter (openai/gpt-4o-mini)',
+      metrics,
       analysis: parsed
     });
   } catch (err) {
-    res.status(500).json({ status: 'error', provider: 'Google Gemini Pro AI Engine', message: err.message });
-  }
-});
+    console.error('[AI Analyze Error]:', err.message);
+    // Return high-fidelity rule-based analysis so the dashboard never goes blank
+    const monthlyKwh = Number(((metrics.p * 24 * 30) / 1000).toFixed(2));
+    const monthlyCost = Math.round(monthlyKwh * 8.5);
 
-// AI Engine Configuration Route
-app.get('/api/ai/config', (req, res) => {
-  res.json({
-    status: 'active',
-    engine: 'Industrial Power AI Analytics Engine',
-    model: 'Gemini 3.6 Flash / Native AI',
-    features: ['Realtime Peak Prediction', 'Load Anomaly Detection', '30-Day Cost Projection']
-  });
-});
-
-// AI Analyze Telemetry Route
-app.post('/api/ai/analyze', (req, res) => {
-  const latest = deviceState.latestData || { voltage: 0, current: 0, power: 0, frequency: 50, pf: 0, energy: 0 };
-  const isZeroLoad = latest.power < 0.5 || latest.voltage < 5.0;
-
-  res.json({
-    status: 'success',
-    analysis: {
-      engine: 'Industrial Power AI Analytics Engine',
-      summary: isZeroLoad
-        ? 'Sensor is currently offline or drawing zero load. Standby baseline detected.'
-        : `Active load detected at ${latest.power}W with power factor ${latest.pf}. Voltage levels are stable at ${latest.voltage}V.`,
-      efficiency_rating: isZeroLoad ? 'N/A (Standby)' : (latest.pf >= 0.95 ? 'A+' : latest.pf >= 0.85 ? 'B' : 'C'),
-      anomaly_detected: !isZeroLoad && (latest.voltage < 190 || latest.voltage > 250),
-      predictions: {
-        predicted_peak_watt: isZeroLoad ? 0 : Math.round(latest.power * 1.25),
-        projected_30d_cost_inr: isZeroLoad ? 0 : Math.round((latest.power * 24 * 30 / 1000) * 8.5)
+    return res.json({
+      status: 'success',
+      provider: 'OpenRouter Local Fallback Engine',
+      fallbackReason: err.message,
+      metrics,
+      analysis: {
+        load_condition: metrics.condition,
+        load_category: metrics.category,
+        health_score: metrics.healthScore,
+        efficiency_rating: metrics.efficiencyGrade,
+        thermal_risk: metrics.thermalRisk,
+        grid_stability: metrics.gridStability,
+        apparent_power_va: metrics.apparentPower,
+        reactive_power_var: metrics.reactivePower,
+        summary: `Load diagnosed as ${metrics.condition} (${metrics.category}) with active draw of ${metrics.p}W at ${metrics.v}V (${metrics.pf} PF). Thermal stress is ${metrics.thermalRisk}.`,
+        load_type_detected: metrics.p < 5 ? 'Zero/Standby Load' : (metrics.pf > 0.95 ? 'Resistive Load (Heater/Incandescent)' : 'Inductive / Reactive Equipment'),
+        recommendations: [
+          metrics.pf < 0.85 ? 'Install APFC capacitor bank to compensate inductive reactive burden.' : 'Power factor is optimal (>0.85); line losses are low.',
+          metrics.v < 207 ? 'Grid voltage is sagging below 207V. Monitor motor windings for excessive temperature.' : 'Grid voltage is stable within nominal tolerances.',
+          'Ensure conductors and PZEM-004T CT sensor are firmly terminated.'
+        ],
+        projected_kwh_monthly: monthlyKwh,
+        projected_cost_monthly_inr: monthlyCost
       }
-    }
-  });
+    });
+  }
 });
 
-// Reports Data Summary Route
-app.get('/api/reports-data', (req, res) => {
-  const total = telemetryRecords.length;
-  const powers = telemetryRecords.map(r => r.power || 0);
-  const peakPower = powers.length > 0 ? Math.max(...powers) : 0;
-  res.json({
-    status: 'success',
-    total_records: total,
-    peak_power_w: peakPower,
-    device_id: deviceState.deviceId
-  });
+// Backward-compatible alias for /api/ai/insights
+app.get('/api/ai/insights', async (req, res) => {
+  req.body = { telemetry: deviceState.latestData };
+  return app._router.handle({ ...req, method: 'POST', url: '/api/ai/analyze' }, res);
 });
 
-// AI Copilot Interactive Chat Route
-app.post('/api/ai/chat', (req, res) => {
+// Interactive AI Copilot Chat Route (OpenRouter GPT-4o-mini)
+app.post('/api/ai/chat', async (req, res) => {
   const userMsg = (req.body && req.body.message) || '';
-  const latest = deviceState.latestData;
-
-  let reply = 'Hello! I am your Smart Energy Monitor Assistant. ';
-  if (userMsg.toLowerCase().includes('status') || userMsg.toLowerCase().includes('hardware')) {
-    reply += `Current device status is ${deviceState.online ? 'ONLINE' : 'OFFLINE'}. Hardware ID: ${deviceState.deviceId}. WiFi RSSI: ${deviceState.rssi} dBm.`;
-  } else {
-    reply += `Your current power consumption is ${latest ? latest.power : 0}W at ${latest ? latest.voltage : 0}V AC. All telemetry channels are operating normally.`;
+  if (!userMsg.trim()) {
+    return res.status(400).json({ status: 'error', message: 'Message cannot be empty.' });
   }
 
-  res.json({
-    status: 'success',
-    provider: 'Smart IoT AI Assistant',
-    model: 'Gemini 3.6 Flash Engine',
-    reply
-  });
+  const latest = deviceState.latestData || {
+    voltage: 230.0,
+    current: 0.0,
+    power: 0.0,
+    frequency: 50.0,
+    pf: 0.0,
+    energy: 0.0
+  };
+
+  const metrics = evaluateLoadConditionMetrics(latest);
+  const history = Array.isArray(req.body.history) ? req.body.history.slice(-8) : [];
+
+  const systemPrompt = `You are the KSRCT EEE Smart Energy AI Copilot & Electrical Load Diagnostic Specialist.
+You have real-time direct access to the live ESP32 PZEM-004T telemetry stream.
+You must understand and explain the EXACT CONDITION OF THE LOAD, power factor, reactive power, electrical safety, energy efficiency, and hardware health.
+
+LIVE ELECTRICAL TELEMETRY SNAPSHOT:
+- Hardware Device: ${deviceState.deviceId} (Status: ${deviceState.online ? 'ONLINE' : 'STANDBY/OFFLINE'})
+- Voltage: ${metrics.v} V AC (Nominal 230V, Grid Quality: ${metrics.gridStability})
+- Current: ${metrics.i} A RMS (Thermal Risk: ${metrics.thermalRisk})
+- Active Power: ${metrics.p} W
+- Power Factor: ${metrics.pf} (${metrics.category})
+- Frequency: ${metrics.f} Hz (Nominal 50.0 Hz)
+- Apparent Power: ${metrics.apparentPower} VA
+- Reactive Power: ${metrics.reactivePower} VAR
+- Total Energy Consumed: ${latest.energy || 0} kWh
+- Diagnosed Load Condition: ${metrics.condition}
+- Load Health Score: ${metrics.healthScore}/100 (Grade: ${metrics.efficiencyGrade})
+
+INSTRUCTIONS:
+1. Always reference the LIVE load condition and exact telemetry values when the user asks about the load, status, power, energy, or faults.
+2. Provide clear, professional electrical engineering insights (explain whether the load is resistive, inductive motor load, standby, or overload).
+3. Give practical advice for power factor improvement, load balancing, safety, and tariff reduction.
+4. Keep answers concise, clear, and easy to read with bullet points when relevant.
+5. If the user asks about creators: Web developed by Prasanna, HarishKumar, Rahul; Hardware by Viswanath; Product by Pavinkumar; Dept of EEE - KSRCT.`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history.map(h => ({
+      role: h.role === 'user' ? 'user' : 'assistant',
+      content: String(h.content || '')
+    })),
+    { role: 'user', content: userMsg }
+  ];
+
+  try {
+    const reply = await callOpenRouter(messages, 0.4, 650);
+    return res.json({
+      status: 'success',
+      provider: 'OpenRouter (openai/gpt-4o-mini)',
+      reply,
+      snapshot: {
+        voltage: metrics.v,
+        current: metrics.i,
+        power: metrics.p,
+        pf: metrics.pf,
+        condition: metrics.condition,
+        category: metrics.category,
+        health_score: metrics.healthScore,
+        deviceId: deviceState.deviceId
+      }
+    });
+  } catch (err) {
+    console.error('[AI Chat Error]:', err.message);
+    // Intelligent local fallback response
+    let fallbackReply = `⚡ **[AI Diagnostic Copilot]**\n\n`;
+    fallbackReply += `Current Live Load Condition: **${metrics.condition}**\n`;
+    fallbackReply += `• **Active Power:** ${metrics.p} W | **Voltage:** ${metrics.v} V AC\n`;
+    fallbackReply += `• **Current:** ${metrics.i} A | **Power Factor:** ${metrics.pf} (${metrics.category})\n`;
+    fallbackReply += `• **Load Health Score:** ${metrics.healthScore}/100 (${metrics.efficiencyGrade})\n\n`;
+
+    if (metrics.p < 5) {
+      fallbackReply += `Your monitored circuit is currently in **Standby or Zero Load** mode. Connect an electrical load to observe real-time dynamic waveforms and power draw.`;
+    } else if (metrics.pf < 0.85) {
+      fallbackReply += `Your circuit is drawing **inductive reactive power** (${metrics.reactivePower} VAR). Consider shunt capacitance to improve the power factor above 0.90.`;
+    } else {
+      fallbackReply += `The connected load is operating efficiently with unity/near-unity power factor and stable grid voltage.`;
+    }
+
+    return res.json({
+      status: 'success',
+      provider: 'OpenRouter Local Fallback',
+      fallbackNotice: err.message,
+      reply: fallbackReply,
+      snapshot: {
+        voltage: metrics.v,
+        current: metrics.i,
+        power: metrics.p,
+        pf: metrics.pf,
+        condition: metrics.condition,
+        category: metrics.category,
+        health_score: metrics.healthScore,
+        deviceId: deviceState.deviceId
+      }
+    });
+  }
 });
 
 

@@ -58,7 +58,7 @@ export const DeviceStatus: React.FC<DeviceStatusProps> = ({
           <span>|</span>
           <span><strong>⚡ Hardware:</strong> Viswanath</span>
           <span>|</span>
-          <span><strong>📦 Product:</strong> Pavinkumar</span>
+          <span><strong>🐣 Product:</strong> Pavinkumar</span>
         </div>
         <div className="text-[var(--text-dim)] font-semibold">
           DEPARTMENT OF ELECTRICAL &amp; ELECTRONICS ENGINEERING (EEE) - KSRCT

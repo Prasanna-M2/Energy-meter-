@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "ESP32 Energy Monitor & Real-Time Waveform Studio with 7-Day Storage",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",

@@ -68,10 +68,38 @@
       <button class="tab-btn" onclick="switchTab('historyTab', this)">
         <i data-lucide="database"></i> Telemetry Storage &amp; Graph Analytics
       </button>
+      <button class="tab-btn" onclick="switchTab('aiTab', this)" id="navAiTabBtn">
+        <i data-lucide="bot"></i> AI Load Analysis &amp; Copilot
+        <span class="badge" style="background:linear-gradient(135deg, #a855f7, #3b82f6); color:#fff; font-size:0.65rem; padding:2px 7px; border-radius:10px; margin-left:6px; font-weight:700;">GPT-4o-mini</span>
+      </button>
     </nav>
 
     <!-- TAB 1: LIVE TELEMETRY & WAVEFORM -->
     <div id="liveTab" class="tab-content active">
+
+      <!-- AI Load Condition Real-Time Banner -->
+      <div class="ai-live-banner" id="aiLiveBanner">
+        <div class="ai-banner-left">
+          <div class="ai-spark-icon"><i data-lucide="sparkles"></i></div>
+          <div>
+            <div class="ai-banner-title">
+              <span>AI Load Condition Diagnostic</span>
+              <span class="badge-ai" id="liveLoadConditionBadge">STANDBY / IDLE</span>
+              <span id="liveEfficiencyGrade" style="font-size:0.75rem; padding:2px 6px; border-radius:4px; background:rgba(0,230,118,0.15); color:#00e676; font-family:var(--font-mono); font-weight:700;">GRADE: A+</span>
+            </div>
+            <div class="ai-banner-desc" id="liveLoadConditionDesc">Monitoring voltage, current, PF, and thermal safety in real time via OpenRouter GPT-4o-mini.</div>
+          </div>
+        </div>
+        <div class="ai-banner-actions">
+          <button class="btn btn-sm btn-ai" onclick="runAiAnalysis(true)" title="Run full OpenAI GPT-4o-mini analysis on live telemetry">
+            <i data-lucide="cpu" id="aiRefreshIcon"></i> Run Deep Diagnosis
+          </button>
+          <button class="btn btn-sm btn-secondary" onclick="openAiChatDrawer()" title="Chat with AI Copilot">
+            <i data-lucide="message-square"></i> Ask Copilot
+          </button>
+        </div>
+      </div>
+
       <!-- Real-Time Sensor Metrics Cards -->
       <div class="metrics-grid">
         <!-- Voltage -->
@@ -373,12 +401,226 @@
         </div>
       </div>
     </div>
+
+    <!-- TAB 3: AI LOAD DIAGNOSTIC & COPILOT -->
+    <div id="aiTab" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <i data-lucide="sparkles" style="color:#a855f7;"></i>
+            <h2>AI Electrical Load Diagnostic Studio</h2>
+            <span class="badge" style="background:rgba(168, 85, 247, 0.15); color:#c084fc; border:1px solid rgba(168, 85, 247, 0.3); font-family:var(--font-mono); font-size:0.75rem;">
+              MODEL: openai/gpt-4o-mini (OpenRouter)
+            </span>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-ai" onclick="runAiAnalysis(true)">
+              <i data-lucide="refresh-cw" id="aiTabRefreshIcon"></i> Refresh Diagnosis
+            </button>
+          </div>
+        </div>
+
+        <div class="ai-dashboard-grid">
+          <!-- Left Column: Load Condition & Electrical Metrics -->
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            <!-- Health & Condition Card -->
+            <div class="ai-card">
+              <div class="ai-card-header">
+                <span class="ai-card-title"><i data-lucide="shield-check" style="color:#00e676;"></i> Load Health &amp; Condition</span>
+                <span id="aiCardGradeBadge" class="badge badge-success" style="font-size:0.8rem; font-weight:800; font-family:var(--font-mono);">A+ RATING</span>
+              </div>
+
+              <div class="ai-load-score-wrapper">
+                <div class="ai-score-circle" id="aiScoreCircle" style="--score-angle: 340deg;">
+                  <div class="ai-score-circle-inner">
+                    <span class="ai-score-number" id="aiScoreNumber" style="color:#00e676;">95</span>
+                    <span class="ai-score-label">HEALTH</span>
+                  </div>
+                </div>
+
+                <div class="ai-load-status-info">
+                  <div class="ai-load-condition-heading" id="aiConditionHeading">STANDBY / ZERO LOAD</div>
+                  <div class="ai-load-category-pill" id="aiCategoryPill">Standby Baseline</div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap; font-size:0.75rem;">
+                    <span class="badge" id="aiThermalBadge" style="background:rgba(0,230,118,0.1); color:#00e676; border-color:rgba(0,230,118,0.3);">
+                      Thermal: LOW
+                    </span>
+                    <span class="badge" id="aiGridBadge" style="background:rgba(59,130,246,0.1); color:#3b82f6; border-color:rgba(59,130,246,0.3);">
+                      Grid: STABLE
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Power Triangle & Parameters Grid -->
+              <div class="ai-params-grid">
+                <div class="ai-param-item">
+                  <div class="ai-param-name">Active Power (P)</div>
+                  <div class="ai-param-value" id="aiParamP" style="color:#00e676;">0.0 W</div>
+                </div>
+                <div class="ai-param-item">
+                  <div class="ai-param-name">Apparent (S)</div>
+                  <div class="ai-param-value" id="aiParamS" style="color:#3b82f6;">0.0 VA</div>
+                </div>
+                <div class="ai-param-item">
+                  <div class="ai-param-name">Reactive (Q)</div>
+                  <div class="ai-param-value" id="aiParamQ" style="color:#c084fc;">0.0 VAR</div>
+                </div>
+                <div class="ai-param-item">
+                  <div class="ai-param-name">Power Factor (PF)</div>
+                  <div class="ai-param-value" id="aiParamPF" style="color:#f59e0b;">0.00</div>
+                </div>
+                <div class="ai-param-item">
+                  <div class="ai-param-name">30D Forecast kWh</div>
+                  <div class="ai-param-value" id="aiParamKwh">0.0 kWh</div>
+                </div>
+                <div class="ai-param-item">
+                  <div class="ai-param-name">Est. Monthly Bill</div>
+                  <div class="ai-param-value" id="aiParamBill" style="color:#00f2fe;">₹ 0</div>
+                </div>
+              </div>
+
+              <!-- AI Analysis Summary -->
+              <div style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; font-family:var(--font-mono);">
+                <i data-lucide="file-text" style="width:14px; height:14px; vertical-align:middle;"></i> AI Diagnostic Findings
+              </div>
+              <div class="ai-summary-box" id="aiSummaryBox">
+                Awaiting telemetry stream to generate AI diagnosis... Click "Refresh Diagnosis" to analyze live load.
+              </div>
+
+              <!-- Connected Load Classification -->
+              <div style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; font-family:var(--font-mono);">
+                <i data-lucide="layers" style="width:14px; height:14px; vertical-align:middle;"></i> Detected Load Signature
+              </div>
+              <div style="font-size:0.85rem; color:var(--text-main); margin-bottom:16px; padding:10px 14px; background:var(--bg-card-hover); border:1px solid var(--border-color); border-radius:8px;" id="aiDetectedLoad">
+                Analyzing voltage-current phase signature...
+              </div>
+
+              <!-- Recommendations -->
+              <div style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px; font-family:var(--font-mono);">
+                <i data-lucide="check-circle" style="width:14px; height:14px; vertical-align:middle;"></i> Actionable Recommendations
+              </div>
+              <ul class="ai-recommendation-list" id="aiRecommendationsList">
+                <li><i data-lucide="arrow-right"></i> Connect load to ESP32 PZEM-004T to view real-time energy insights.</li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Right Column: Interactive AI Copilot Chat -->
+          <div>
+            <div class="ai-card ai-chat-container">
+              <div class="ai-chat-header">
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <div style="width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg, #3b82f6, #a855f7); display:flex; align-items:center; justify-content:center; color:#fff;">
+                    <i data-lucide="bot" style="width:18px; height:18px;"></i>
+                  </div>
+                  <div>
+                    <div style="font-weight:700; font-size:0.95rem;">Smart Energy Copilot</div>
+                    <div style="font-size:0.75rem; color:#00e676; display:flex; align-items:center; gap:4px;">
+                      <span style="width:6px; height:6px; border-radius:50%; background:#00e676;"></span>
+                      Live Load Aware · GPT-4o-mini
+                    </div>
+                  </div>
+                </div>
+                <button class="btn-sm" onclick="clearAiChat()" title="Clear chat history" style="font-size:0.75rem;">
+                  <i data-lucide="trash-2"></i> Clear
+                </button>
+              </div>
+
+              <!-- Message Stream -->
+              <div class="ai-chat-messages" id="aiChatMessages">
+                <div class="chat-bubble chat-bubble-ai">
+                  <div><strong>👋 Welcome to the KSRCT EEE Energy Copilot!</strong></div>
+                  <div style="margin-top:6px;">
+                    I have real-time access to your ESP32 PZEM-004T sensor. Ask me anything about your electrical load condition, inductive vs resistive behavior, power factor, or power consumption!
+                  </div>
+                  <div class="chat-time">Just now</div>
+                </div>
+              </div>
+
+              <!-- Quick Prompt Chips -->
+              <div class="chat-chips">
+                <button class="chat-chip" onclick="insertQuickPrompt('What is the condition of my load right now?')">
+                  ⚡ Condition of my load?
+                </button>
+                <button class="chat-chip" onclick="insertQuickPrompt('Is my load inductive or resistive?')">
+                  🔄 Inductive or Resistive?
+                </button>
+                <button class="chat-chip" onclick="insertQuickPrompt('Is my power factor healthy or losing efficiency?')">
+                  📊 Check Power Factor
+                </button>
+                <button class="chat-chip" onclick="insertQuickPrompt('Detect any thermal overload or voltage risks.')">
+                  ⚠️ Overload &amp; Voltage Safety
+                </button>
+                <button class="chat-chip" onclick="insertQuickPrompt('How can I reduce the monthly electricity bill?')">
+                  💡 Tariff &amp; Savings Tips
+                </button>
+              </div>
+
+              <!-- Chat Input Bar -->
+              <div class="chat-input-bar">
+                <input type="text" id="aiChatInput" class="input-field" placeholder="Ask about load condition, PF, voltage, motors..." onkeydown="handleChatKeyDown(event)">
+                <button class="btn btn-primary" id="aiChatSendBtn" onclick="sendAiChatMessage()">
+                  <i data-lucide="send"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
-    <!-- Footer -->
-    <footer>
-      ESP32 Energy Monitor
-    </footer>
+  <!-- Floating AI Copilot Trigger Button -->
+  <button class="floating-ai-fab" id="floatingAiFab" onclick="openAiChatDrawer()" title="Open Smart AI Copilot">
+    <i data-lucide="sparkles"></i>
+    <span>AI Copilot</span>
+  </button>
+
+  <!-- Slide-out AI Copilot Drawer -->
+  <div class="ai-drawer-overlay" id="aiDrawerOverlay" onclick="closeAiChatDrawer()"></div>
+  <aside class="ai-drawer" id="aiDrawer">
+    <div class="ai-drawer-header">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <i data-lucide="bot" style="color:#a855f7;"></i>
+        <h3 style="font-size:1rem; font-weight:700;">AI Energy Copilot</h3>
+        <span class="badge" style="font-size:0.65rem; background:rgba(59,130,246,0.15); color:#3b82f6;">GPT-4o-mini</span>
+      </div>
+      <button class="ai-drawer-close" onclick="closeAiChatDrawer()">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+    <div style="padding:10px 16px; background:var(--bg-card-hover); border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:0.75rem; color:var(--text-muted);">Current Load: <strong id="drawerLoadStatus" style="color:#00e676;">STANDBY</strong></span>
+      <button class="btn-sm" onclick="switchTab('aiTab', document.getElementById('navAiTabBtn')); closeAiChatDrawer();" style="font-size:0.72rem; padding:3px 8px;">
+        Full Studio <i data-lucide="external-link" style="width:12px; height:12px; margin-left:3px;"></i>
+      </button>
+    </div>
+    <div class="ai-chat-messages" id="drawerChatMessages" style="flex:1; padding:16px;">
+      <div class="chat-bubble chat-bubble-ai">
+        <div><strong>⚡ AI Energy Copilot ready</strong></div>
+        <div style="margin-top:4px;">Ask me about your live voltage, active load, or power factor!</div>
+      </div>
+    </div>
+    <div style="padding:10px 16px; border-top:1px solid var(--border-color);">
+      <div class="chat-chips" style="padding-bottom:4px;">
+        <button class="chat-chip" onclick="insertDrawerPrompt('What is my current load condition?')">⚡ Current load?</button>
+        <button class="chat-chip" onclick="insertDrawerPrompt('Is power factor optimal?')">📊 Power factor?</button>
+        <button class="chat-chip" onclick="insertDrawerPrompt('Any anomalies?')">⚠️ Check safety</button>
+      </div>
+      <div class="chat-input-bar">
+        <input type="text" id="drawerChatInput" class="input-field" placeholder="Ask about load..." onkeydown="handleDrawerKeyDown(event)">
+        <button class="btn btn-primary" onclick="sendDrawerChatMessage()">
+          <i data-lucide="send"></i>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Footer -->
+  <footer>
+    ESP32 Energy Monitor
+  </footer>
   </div>
 
   <!-- Main JavaScript App Logic -->
