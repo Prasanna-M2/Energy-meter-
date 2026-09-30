@@ -19,7 +19,8 @@ class WebSocketClient {
     } else {
       const loc = window.location;
       const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-      this.url = `${protocol}//${loc.host}/ws`;
+      const host = loc.port === '5173' || loc.port === '3000' ? `${loc.hostname}:3000` : loc.host;
+      this.url = `${protocol}//${host}`;
     }
   }
 

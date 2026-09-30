@@ -49,14 +49,31 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-4 md:px-6 flex flex-wrap justify-between items-center gap-4 shadow-lg transition-colors">
       {/* Brand & Device */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00f2fe]/20 to-[#3b82f6]/20 border border-[#00f2fe]/40 flex items-center justify-center text-[var(--primary-cyan)] shadow-sm">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00f2fe]/20 to-[#3b82f6]/20 border border-[#00f2fe]/40 flex items-center justify-center text-[var(--primary-cyan)] shadow-md">
           <Zap className="w-5 h-5" />
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg md:text-xl font-bold tracking-tight text-[var(--text-main)]">
-              ESP32 Energy Monitor
+            <h1 className="text-lg md:text-xl font-bold tracking-tight text-[var(--text-main)] flex items-center gap-2">
+              <span className="bg-gradient-to-r from-[#00f2fe] to-[#3b82f6] bg-clip-text text-transparent font-extrabold">EEE</span>
+              <span className="text-[var(--text-muted)] font-light">|</span>
+              <span>Smart Energy Console</span>
             </h1>
+            <span className="px-2 py-0.5 text-[10px] font-extrabold tracking-wider font-mono rounded bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/30 shadow-sm">
+              DEPT OF EEE
+            </span>
+          </div>
+
+          {/* Project Team Creator Credits */}
+          <div className="flex items-center gap-2 text-[11px] font-mono mt-0.5 text-[var(--text-muted)] flex-wrap">
+            <span className="text-[var(--primary-cyan)] font-semibold">💻 Web:</span>
+            <span className="text-[var(--text-main)] font-medium">Prasanna, HarishKumar, Rahul</span>
+            <span className="text-[var(--text-dim)]">•</span>
+            <span className="text-[#00e676] font-semibold">⚡ Hardware:</span>
+            <span className="text-[var(--text-main)] font-medium">Viswanath</span>
+            <span className="text-[var(--text-dim)]">•</span>
+            <span className="text-[#ff9800] font-semibold">📦 Product:</span>
+            <span className="text-[var(--text-main)] font-medium">Pavinkumar</span>
           </div>
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] font-mono">
             <Cpu className="w-3.5 h-3.5 text-[var(--primary-blue)]" />

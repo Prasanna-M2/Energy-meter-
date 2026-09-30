@@ -41,7 +41,7 @@ export interface Statistics {
 }
 
 export type ScopeChannel = 'voltage' | 'current' | 'power';
-export type HistoryChannel = 'voltage' | 'current' | 'power' | 'frequency';
+export type HistoryChannel = 'voltage' | 'current' | 'power' | 'frequency' | 'pf';
 export type TimeWindowSec = 15 | 30 | 60;
-export type HistoryRange = '1h' | '6h' | '1d' | '3d' | '7d';
+export type HistoryRange = '1h' | '6h' | '1d' | '3d' | '7d' | 'all';
 export type ThemeMode = 'dark' | 'light';

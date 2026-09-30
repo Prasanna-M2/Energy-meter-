@@ -20,8 +20,11 @@ backend/app/*/__pycache__/
 .env
 .env.local
 *.env
+gcp-key.json
+*.jsonl
 
 # Runtime data & logs
+data/
 mosquitto/data/
 mosquitto/log/
 *.log

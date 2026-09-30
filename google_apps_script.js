@@ -1,17 +1,10 @@
 /**
  * ==============================================================================
- * ESP32 Real-Time Energy Monitor - Google Apps Script Webhook (Top-Row Ingestion)
+ * ESP32 REAL-TIME TELEMETRY & DATA ANALYSIS - GOOGLE APPS SCRIPT WEBHOOK
  * ==============================================================================
- * Features:
- * 1. Safe Sheet Targeter: Exclusively targets normal GRID sheets (Sheet1), NEVER crashes
- *    on OBJECT/Canvas/Dashboard sheets.
- * 2. Inserts new readings directly at ROW 2 (Top of sheet, right under the headers):
- *    - Newest readings are immediately visible without scrolling down thousands of rows!
- * 3. Matches exact spreadsheet column layout:
- *    Col A: Timestamp | Col B: Voltage (V) | Col C: Current (A) | Col D: Power (W)
- *    Col E: Energy (kWh) | Col F: Frequency (Hz) | Col G: Power Factor | Col H: Device ID | Col I: Status
- * 4. Bi-directional API: logs via POST, reads/shares records via GET
- * 5. Automatic cleanup endpoint (?action=cleanup) to remove old blank rows
+ * Clean, professional, and streamlined Google Sheet system containing ONLY:
+ * 1. Telemetry Log (Structured clean row data)
+ * 2. Data Analysis (Summary metrics & high-resolution trend charts)
  * ==============================================================================
  */
 
@@ -29,80 +22,74 @@ var HEADERS = [
 
 function getTargetSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  // 1. First pass: look for a normal GRID sheet named "Sheet1" (case-insensitive & trimmed)
-  var allSheets = ss.getSheets();
-  var targetSheet = null;
-
-  for (var i = 0; i < allSheets.length; i++) {
-    var s = allSheets[i];
-    if (s.getType() === SpreadsheetApp.SheetType.GRID) {
-      var name = s.getName().trim().toLowerCase();
-      if (name === "sheet1" || name === "sheet 1") {
-        targetSheet = s;
-        break;
-      }
+  var sheet = ss.getSheetByName("Telemetry Log");
+  
+  if (!sheet) {
+    var firstSheet = ss.getSheets()[0];
+    if (firstSheet && (firstSheet.getName() === "Sheet1" || firstSheet.getName() === "Sheet 1")) {
+      firstSheet.setName("Telemetry Log");
+      sheet = firstSheet;
+    } else {
+      sheet = ss.insertSheet("Telemetry Log", 0);
     }
   }
 
-  // 2. Second pass: if no Sheet1 found, pick the first GRID sheet
-  if (!targetSheet) {
-    for (var j = 0; j < allSheets.length; j++) {
-      if (allSheets[j].getType() === SpreadsheetApp.SheetType.GRID) {
-        targetSheet = allSheets[j];
-        break;
-      }
-    }
-  }
-
-  // 3. Third pass: if no GRID sheet exists, insert one
-  if (!targetSheet) {
-    targetSheet = ss.insertSheet("Sheet1");
-  }
-
-  // Ensure headers exist
-  if (targetSheet.getLastRow() === 0) {
-    targetSheet.appendRow(HEADERS);
-    var headerRange = targetSheet.getRange(1, 1, 1, HEADERS.length);
+  // Format headers if empty
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(HEADERS);
+    var headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
     headerRange.setFontWeight("bold");
-    headerRange.setBackground("#1e293b");
-    headerRange.setFontColor("#38bdf8");
+    headerRange.setBackground("#1e293b"); // Modern Professional Slate Header
+    headerRange.setFontColor("#ffffff"); // Crisp White Header Text
     headerRange.setHorizontalAlignment("center");
-    targetSheet.setFrozenRows(1);
+    headerRange.setVerticalAlignment("middle");
+    headerRange.setFontSize(11);
+    sheet.setFrozenRows(1);
+    sheet.setRowHeight(1, 38);
+    sheet.setColumnWidth(1, 175); // Ensure Timestamp fits comfortably
+    sheet.setColumnWidth(8, 120); // Device ID
+    sheet.setColumnWidth(9, 140); // Status
   }
 
-  return targetSheet;
+  return sheet;
 }
 
 // ------------------------------------------------------------------------------
-// POST: Ingest Telemetry and Insert at Row 2 (Top of Sheet)
+// POST: Ingest Telemetry at Row 2 (Clean Light Professional Styling)
 // ------------------------------------------------------------------------------
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
       return ContentService.createTextOutput(JSON.stringify({
         "result": "error",
-        "message": "Empty POST body received"
+        "message": "Empty payload received"
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
     var sheet = getTargetSheet();
     var data = JSON.parse(e.postData.contents);
 
+    // If reformat action requested via POST
+    if (data.action === "format" || data.action === "reformat") {
+      formatCleanTheme(sheet);
+      return ContentService.createTextOutput(JSON.stringify({
+        "result": "success",
+        "message": "Entire sheet reformatted to clean light theme"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     var now = new Date();
     var timestamp = data.timestamp ? new Date(data.timestamp).toLocaleString() : now.toLocaleString();
     var deviceId  = data.device_id || data.deviceId || "ESP32-001";
 
-    var voltage   = (data.voltage !== undefined && data.voltage !== null && !isNaN(Number(data.voltage))) ? Number(data.voltage) : 0.0;
-    var current   = (data.current !== undefined && data.current !== null && !isNaN(Number(data.current))) ? Number(data.current) : 0.0;
-    var power     = (data.power !== undefined && data.power !== null && !isNaN(Number(data.power))) ? Number(data.power) : 0.0;
-    var energy    = (data.energy !== undefined && data.energy !== null && !isNaN(Number(data.energy))) ? Number(data.energy) : 0.0;
-    var frequency = (data.frequency !== undefined && data.frequency !== null && !isNaN(Number(data.frequency))) ? Number(data.frequency) : 0.0;
-    var pf        = (data.pf !== undefined && data.pf !== null && !isNaN(Number(data.pf))) ? Number(data.pf) : 0.0;
+    var voltage   = Number(data.voltage) || 0.0;
+    var current   = Number(data.current) || 0.0;
+    var power     = Number(data.power) || 0.0;
+    var energy    = Number(data.energy) || 0.0;
+    var frequency = Number(data.frequency) || 0.0;
+    var pf        = Number(data.pf) || 0.0;
     var status    = data.status || (voltage > 5.0 ? "ONLINE" : "DISCONNECTED");
 
-    // Exact Column Order matching the Google Sheet:
-    // A: Timestamp | B: Voltage | C: Current | D: Power | E: Energy | F: Freq | G: PF | H: Device ID | I: Status
     var newRow = [
       timestamp,
       voltage,
@@ -115,23 +102,53 @@ function doPost(e) {
       status
     ];
 
-    // Insert directly at Row 2 so it is immediately visible at the top!
     sheet.insertRowAfter(1);
-    sheet.getRange(2, 1, 1, newRow.length).setValues([newRow]);
+    var targetRange = sheet.getRange(2, 1, 1, newRow.length);
+    targetRange.setValues([newRow]);
+    
+    // Explicit Clean Light Colors: Crisp White background with Dark Charcoal text
+    targetRange.setBackground("#ffffff");
+    targetRange.setFontColor("#0f172a");
+    targetRange.setFontWeight("normal");
+    targetRange.setFontSize(10);
+    targetRange.setHorizontalAlignment("center");
+    targetRange.setVerticalAlignment("middle");
+    targetRange.setBorder(true, true, true, true, true, true, "#e2e8f0", SpreadsheetApp.BorderStyle.SOLID);
+    
+    // Clean Number Formatting with Units
+    sheet.getRange(2, 2).setNumberFormat("0.0 \"V\"");
+    sheet.getRange(2, 3).setNumberFormat("0.00 \"A\"");
+    sheet.getRange(2, 4).setNumberFormat("0.0 \"W\"");
+    sheet.getRange(2, 5).setNumberFormat("0.0000 \"kWh\"");
+    sheet.getRange(2, 6).setNumberFormat("0.0 \"Hz\"");
+    sheet.getRange(2, 7).setNumberFormat("0.00");
+
+    // Color-Coded Status Badge
+    var statusCell = sheet.getRange(2, 9);
+    statusCell.setFontWeight("bold");
+    if (status.indexOf("ONLINE") !== -1) {
+      statusCell.setBackground("#dcfce7"); // Soft Emerald Green
+      statusCell.setFontColor("#15803d"); // Dark Green
+    } else if (status.indexOf("OFFLINE") !== -1) {
+      statusCell.setBackground("#fee2e2"); // Soft Rose Red
+      statusCell.setFontColor("#b91c1c"); // Dark Red
+    } else if (status.indexOf("SNAPSHOT") !== -1) {
+      statusCell.setBackground("#e0f2fe"); // Soft Sky Blue
+      statusCell.setFontColor("#0369a1"); // Dark Blue
+    } else {
+      statusCell.setBackground("#fef3c7"); // Soft Amber Yellow
+      statusCell.setFontColor("#b45309"); // Dark Amber
+    }
 
     return ContentService.createTextOutput(JSON.stringify({
       "result": "success",
-      "message": "Telemetry logged at Row 2",
-      "row": 2,
+      "message": "Telemetry logged cleanly to Telemetry Log tab",
       "recorded": {
         "timestamp": timestamp,
         "voltage": voltage,
         "current": current,
         "power": power,
         "energy": energy,
-        "frequency": frequency,
-        "pf": pf,
-        "device_id": deviceId,
         "status": status
       }
     })).setMimeType(ContentService.MimeType.JSON);
@@ -145,7 +162,7 @@ function doPost(e) {
 }
 
 // ------------------------------------------------------------------------------
-// GET: Read Data & Cleanup API
+// GET: Query Telemetry Data
 // ------------------------------------------------------------------------------
 function doGet(e) {
   try {
@@ -153,26 +170,22 @@ function doGet(e) {
     var params = (e && e.parameter) ? e.parameter : {};
     var action = (params.action || "ping").toLowerCase();
 
-    // 1. Webhook Ping Health Check
-    if (action === "ping") {
+    if (action === "format" || action === "reformat") {
+      formatCleanTheme(sheet);
       return ContentService.createTextOutput(JSON.stringify({
         "result": "success",
-        "message": "PulseIoT ESP32 Google Sheet Webhook is Active!",
-        "sheet_name": sheet.getName(),
-        "total_rows": sheet.getLastRow(),
-        "timestamp": new Date().toISOString()
+        "message": "Telemetry Log sheet reformatted to clean light professional theme!",
+        "rows_formatted": sheet.getLastRow()
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 2. Clean up old/empty rows in bulk
-    if (action === "cleanup") {
-      var lastRow = sheet.getLastRow();
-      if (lastRow > 2) {
-        sheet.deleteRows(3, lastRow - 2);
-      }
+    if (action === "ping") {
       return ContentService.createTextOutput(JSON.stringify({
         "result": "success",
-        "message": "Old rows cleaned up! All new readings will appear starting at Row 2."
+        "system": "ESP32 Energy Monitor - Clean Telemetry Engine",
+        "sheet_name": sheet.getName(),
+        "total_rows": sheet.getLastRow(),
+        "timestamp": new Date().toISOString()
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -188,13 +201,12 @@ function doGet(e) {
     var limit = params.limit ? Math.min(parseInt(params.limit, 10), 100) : 50;
     var numRows = Math.min(lastRow - 1, limit);
 
-    // Read top N rows (starting from Row 2 down)
     var rangeData = sheet.getRange(2, 1, numRows, HEADERS.length).getValues();
     var records = [];
 
     for (var i = 0; i < rangeData.length; i++) {
       var row = rangeData[i];
-      if (!row[0] && !row[1] && !row[7]) continue; // Skip completely blank lines
+      if (!row[0] && !row[1]) continue;
       records.push({
         timestamp: row[0],
         voltage: Number(row[1]) || 0.0,
@@ -223,49 +235,143 @@ function doGet(e) {
 }
 
 // ------------------------------------------------------------------------------
-// One-Click Graphical Chart Builder in Google Sheets
+// Custom UI Menu: One-Click Analysis Setup
 // ------------------------------------------------------------------------------
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu("⚡ Energy Monitor")
-    .addItem("📊 Create Telemetry Chart", "createTelemetryChart")
-    .addItem("🧹 Clean Up Blank Rows", "cleanupRowsMenu")
+  ui.createMenu("⚡ Telemetry Menu")
+    .addItem("🎨 Apply Clean Light Color Theme", "formatCleanThemeMenu")
+    .addItem("📊 Build Data Analysis Dashboard", "buildAnalysisDashboard")
     .addToUi();
 }
 
-function createTelemetryChart() {
+function formatCleanThemeMenu() {
   var sheet = getTargetSheet();
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    SpreadsheetApp.getUi().alert("No data rows available yet to plot a chart.");
-    return;
-  }
-
-  // Use Timestamp (Col A), Voltage (Col B), Current (Col C), and Power (Col D)
-  var range = sheet.getRange("A1:D" + lastRow);
-
-  var chart = sheet.newChart()
-    .asLineChart()
-    .addRange(range)
-    .setPosition(2, 11, 0, 0) // Position chart at Column K, Row 2 (right beside data)
-    .setTitle("ESP32 Telemetry Trends (Power, Voltage & Current)")
-    .setXAxisTitle("Timestamp")
-    .setOption("curveType", "function")
-    .setOption("legend", { position: "top" })
-    .setOption("width", 850)
-    .setOption("height", 450)
-    .build();
-
-  sheet.insertChart(chart);
-  SpreadsheetApp.getUi().alert("Chart created successfully! Look at Column K next to your data table.");
+  formatCleanTheme(sheet);
+  SpreadsheetApp.getUi().alert("✨ Clean Light Theme applied successfully!");
 }
 
-function cleanupRowsMenu() {
-  var sheet = getTargetSheet();
+function formatCleanTheme(sheet) {
+  if (!sheet) sheet = getTargetSheet();
   var lastRow = sheet.getLastRow();
+  
+  // 1. Format Header (Row 1)
+  var headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
+  headerRange.setBackground("#1e293b"); // Deep Slate Navy Header
+  headerRange.setFontColor("#ffffff"); // Crisp White Header Text
+  headerRange.setFontWeight("bold");
+  headerRange.setFontSize(11);
+  headerRange.setHorizontalAlignment("center");
+  headerRange.setVerticalAlignment("middle");
+  sheet.setRowHeight(1, 38);
+  sheet.setFrozenRows(1);
+  
+  if (lastRow > 1) {
+    // 2. Format all data rows (Row 2 to lastRow)
+    var numRows = lastRow - 1;
+    var dataRange = sheet.getRange(2, 1, numRows, HEADERS.length);
+    
+    // Clean White background with clear dark charcoal font
+    dataRange.setBackground("#ffffff");
+    dataRange.setFontColor("#0f172a");
+    dataRange.setFontWeight("normal");
+    dataRange.setFontSize(10);
+    dataRange.setHorizontalAlignment("center");
+    dataRange.setVerticalAlignment("middle");
+    dataRange.setBorder(true, true, true, true, true, true, "#e2e8f0", SpreadsheetApp.BorderStyle.SOLID);
+    
+    // Clean Number formatting with units
+    sheet.getRange(2, 2, numRows, 1).setNumberFormat("0.0 \"V\"");
+    sheet.getRange(2, 3, numRows, 1).setNumberFormat("0.00 \"A\"");
+    sheet.getRange(2, 4, numRows, 1).setNumberFormat("0.0 \"W\"");
+    sheet.getRange(2, 5, numRows, 1).setNumberFormat("0.0000 \"kWh\"");
+    sheet.getRange(2, 6, numRows, 1).setNumberFormat("0.0 \"Hz\"");
+    sheet.getRange(2, 7, numRows, 1).setNumberFormat("0.00");
+    
+    // Color-code the Status column (Column 9) for every row
+    var statusValues = sheet.getRange(2, 9, numRows, 1).getValues();
+    for (var i = 0; i < statusValues.length; i++) {
+      var cell = sheet.getRange(2 + i, 9);
+      var status = String(statusValues[i][0] || "").toUpperCase();
+      cell.setFontWeight("bold");
+      if (status.indexOf("ONLINE") !== -1) {
+        cell.setBackground("#dcfce7"); // Soft Emerald Green
+        cell.setFontColor("#15803d"); // Dark Green
+      } else if (status.indexOf("OFFLINE") !== -1) {
+        cell.setBackground("#fee2e2"); // Soft Rose Red
+        cell.setFontColor("#b91c1c"); // Dark Red
+      } else if (status.indexOf("SNAPSHOT") !== -1) {
+        cell.setBackground("#e0f2fe"); // Soft Sky Blue
+        cell.setFontColor("#0369a1"); // Dark Blue
+      } else {
+        cell.setBackground("#fef3c7"); // Soft Amber Yellow
+        cell.setFontColor("#b45309"); // Dark Amber
+      }
+    }
+  }
+
+  // Proper column widths so nothing is truncated
+  sheet.setColumnWidth(1, 180); // Timestamp
+  sheet.setColumnWidth(2, 100); // Voltage
+  sheet.setColumnWidth(3, 100); // Current
+  sheet.setColumnWidth(4, 110); // Power
+  sheet.setColumnWidth(5, 120); // Energy
+  sheet.setColumnWidth(6, 110); // Frequency
+  sheet.setColumnWidth(7, 100); // PF
+  sheet.setColumnWidth(8, 120); // Device ID
+  sheet.setColumnWidth(9, 140); // Status
+}
+
+function buildAnalysisDashboard() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var logSheet = getTargetSheet();
+  var analyticsSheet = ss.getSheetByName("Data Analysis");
+
+  if (!analyticsSheet) {
+    analyticsSheet = ss.insertSheet("Data Analysis", 1);
+  } else {
+    analyticsSheet.clear();
+  }
+
+  // Header Title
+  analyticsSheet.getRange("A1:H1").merge()
+    .setValue("⚡ ESP32 TELEMETRY & ENERGY DATA ANALYSIS")
+    .setFontWeight("bold")
+    .setFontSize(14)
+    .setBackground("#0f172a")
+    .setFontColor("#38bdf8")
+    .setHorizontalAlignment("center");
+
+  // Summary Metrics Formulas
+  analyticsSheet.getRange("A3").setValue("Peak Power Draw:").setFontWeight("bold");
+  analyticsSheet.getRange("B3").setFormula("=MAX('Telemetry Log'!D2:D)").setNumberFormat("0.0 \"W\"");
+
+  analyticsSheet.getRange("C3").setValue("Average Voltage:").setFontWeight("bold");
+  analyticsSheet.getRange("D3").setFormula("=AVERAGE('Telemetry Log'!B2:B)").setNumberFormat("0.0 \"V\"");
+
+  analyticsSheet.getRange("E3").setValue("Total Energy:").setFontWeight("bold");
+  analyticsSheet.getRange("F3").setFormula("=MAX('Telemetry Log'!E2:E)").setNumberFormat("0.0000 \"kWh\"");
+
+  analyticsSheet.getRange("G3").setValue("Avg Power Factor:").setFontWeight("bold");
+  analyticsSheet.getRange("H3").setFormula("=AVERAGE('Telemetry Log'!G2:G)").setNumberFormat("0.00");
+
+  var lastRow = logSheet.getLastRow();
   if (lastRow > 2) {
-    sheet.deleteRows(3, lastRow - 2);
-    SpreadsheetApp.getUi().alert("Old rows cleaned up! All new readings appear at Row 2.");
-  }
-}
+    var range = logSheet.getRange("A1:D" + lastRow);
+    var chart = analyticsSheet.newChart()
+      .asLineChart()
+      .addRange(range)
+      .setPosition(5, 1, 0, 0)
+      .setTitle("Real-Time Telemetry Trends (Power, Voltage & Current)")
+      .setXAxisTitle("Time")
+      .setOption("curveType", "function")
+      .setOption("legend", { position: "top" })
+      .setOption("width", 900)
+      .setOption("height", 450)
+      .build();
 
+    analyticsSheet.insertChart(chart);
+  }
+
+  SpreadsheetApp.getUi().alert("Data Analysis Dashboard created successfully!");
+}

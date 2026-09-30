@@ -27,16 +27,21 @@
           <i data-lucide="zap"></i>
         </div>
         <div class="brand-title">
-          <h1>ESP32 Energy Monitor</h1>
+          <h1 style="display:flex; align-items:center; gap:8px;">
+            <span style="background: linear-gradient(90deg, #00f2fe, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight:800;">EEE</span>
+            <span style="color:var(--text-muted); font-weight:300;">|</span>
+            <span>Smart Energy Console</span>
+            <span style="font-size:0.65rem; padding:2px 8px; border-radius:4px; background:rgba(245, 158, 11, 0.15); color:#f59e0b; border:1px solid rgba(245, 158, 11, 0.3); font-family:var(--font-mono); font-weight:700;">DEPT OF EEE</span>
+          </h1>
+          <div style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); margin-top:2px;">
+            <span style="color:var(--primary-cyan); font-weight:600;">💻 Web:</span> Prasanna, HarishKumar, Rahul &nbsp;•&nbsp;
+            <span style="color:#00e676; font-weight:600;">⚡ Hardware:</span> Viswanath &nbsp;•&nbsp;
+            <span style="color:#ff9800; font-weight:600;">📦 Product:</span> Pavinkumar
+          </div>
         </div>
       </div>
 
       <div class="header-status">
-        <!-- Direct Google Sheet Link -->
-        <a href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="theme-toggle-btn" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:6px;" title="Open Google Sheet in new tab">
-          <span>📊</span>
-          <span>Google Sheet ↗</span>
-        </a>
 
         <!-- Theme Switcher (Light / Dark) -->
         <button class="theme-toggle-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Switch Light / Dark Theme">
@@ -58,13 +63,10 @@
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
       <button class="tab-btn active" onclick="switchTab('liveTab', this)">
-        <i data-lucide="activity"></i> Live Telemetry &amp; Waveform
+        <i data-lucide="activity"></i> Live Telemetry &amp; Waveform Oscilloscope
       </button>
       <button class="tab-btn" onclick="switchTab('historyTab', this)">
-        <i data-lucide="database"></i> 7-Day Storage &amp; Analytics
-      </button>
-      <button class="tab-btn" onclick="switchTab('sheetTab', this)">
-        <i data-lucide="table"></i> Google Sheets DB
+        <i data-lucide="database"></i> Telemetry Storage &amp; Graph Analytics
       </button>
     </nav>
 
@@ -173,10 +175,10 @@
       <div class="storage-card">
         <div class="storage-info">
           <span><i data-lucide="hard-drive" style="width:14px; height:14px; vertical-align:middle;"></i> 7-Day Local Retention Storage</span>
-          <span id="storageCountText">1,240 data points archived | Retention: 7 Days</span>
+          <span id="storageCountText">0 data points archived | Retention: 7 Days</span>
         </div>
         <div class="progress-bar-bg">
-          <div class="progress-bar-fill" id="storageProgressBar" style="width: 12%;"></div>
+          <div class="progress-bar-fill" id="storageProgressBar" style="width: 0%;"></div>
         </div>
       </div>
 
@@ -266,6 +268,21 @@
               <button class="btn-sm" onclick="fetchHistoryRange('3d', this)">3 Days</button>
               <button class="btn-sm active" onclick="fetchHistoryRange('7d', this)">7 Days</button>
             </div>
+            <div class="btn-group">
+              <button class="btn-sm active" id="btnHistLine" onclick="setHistoryChartType('line', this)">Line Trend</button>
+              <button class="btn-sm" id="btnHistBar" onclick="setHistoryChartType('bar', this)">Bar Chart</button>
+              <button class="btn-sm" id="btnHistStep" onclick="setHistoryChartType('step', this)">Stepped Wave</button>
+            </div>
+            <div class="btn-group">
+              <button class="btn-sm active" onclick="setHistorySignal('all', this)">All Signals</button>
+              <button class="btn-sm" style="color:#00e676; font-weight:600;" onclick="setHistorySignal('power', this)">Power (W)</button>
+              <button class="btn-sm" style="color:#ff9800; font-weight:600;" onclick="setHistorySignal('voltage', this)">Voltage (V)</button>
+              <button class="btn-sm" style="color:#00f2fe; font-weight:600;" onclick="setHistorySignal('current', this)">Current (A)</button>
+              <button class="btn-sm" style="color:#c084fc; font-weight:600;" onclick="setHistorySignal('pf', this)">PF</button>
+            </div>
+            <a href="/api/export?range=all" download class="btn btn-primary" style="text-decoration:none;">
+              <i data-lucide="download"></i> Download Data as CSV
+            </a>
             <button class="btn btn-danger" onclick="clearHistoryData()">
               <i data-lucide="trash-2"></i> Clear Database
             </button>
@@ -300,173 +317,41 @@
           <span class="metric-unit">VOLTS</span>
         </div>
       </div>
-    </div>
 
-    <!-- TAB 3: LIVE GOOGLE SHEET DB & ANALYTICS -->
-    <div id="sheetTab" class="tab-content">
-      <!-- Google Sheets Cloud Analytics Overview KPI Cards -->
-      <div class="metrics-grid" style="margin-bottom:20px;">
-        <div class="metric-card energy">
-          <div class="metric-header">
-            <span class="metric-title">Total Logged Energy</span>
-            <div class="metric-icon"><i data-lucide="battery-charging"></i></div>
+      <!-- Native Real-Time Telemetry Log Table (50 Items Sliding Window) -->
+      <div class="panel" style="margin-top:20px;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span style="width:10px; height:10px; border-radius:50%; background:#00f2fe; display:inline-block; box-shadow:0 0 8px #00f2fe;"></span>
+            <h2>Live Telemetry Storage Table (Last 50 Entries · 1-in 1-out FIFO)</h2>
           </div>
-          <div>
-            <span class="metric-value" id="sheetTotalEnergy">0.0000</span>
-            <span class="metric-unit">kWh</span>
-          </div>
-          <div class="metric-sub">
-            <span>Cumulative Total</span>
-            <span id="sheetSyncBadge" style="color:var(--primary-cyan)">Cloud Synced</span>
-          </div>
-        </div>
-
-        <div class="metric-card pf">
-          <div class="metric-header">
-            <span class="metric-title">Average Power Factor</span>
-            <div class="metric-icon"><i data-lucide="sliders"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="sheetAvgPF">0.00</span>
-            <span class="metric-unit">PF</span>
-          </div>
-          <div class="metric-sub">
-            <span>Grid Efficiency</span>
-            <span>Google DB</span>
-          </div>
-        </div>
-
-        <div class="metric-card power">
-          <div class="metric-header">
-            <span class="metric-title">Peak Active Power</span>
-            <div class="metric-icon"><i data-lucide="gauge"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="sheetPeakPower">0.0</span>
-            <span class="metric-unit">WATTS</span>
-          </div>
-          <div class="metric-sub">
-            <span>Highest Draw</span>
-            <span>Recorded</span>
-          </div>
-        </div>
-
-        <div class="metric-card freq">
-          <div class="metric-header">
-            <span class="metric-title">Total Telemetry Rows</span>
-            <div class="metric-icon"><i data-lucide="database"></i></div>
-          </div>
-          <div>
-            <span class="metric-value" id="sheetTotalRecords">0</span>
-            <span class="metric-unit">ROWS</span>
-          </div>
-          <div class="metric-sub">
-            <span>15s Log Interval</span>
-            <span>Quota Protected</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Action & Controls Bar -->
-      <div class="panel" style="margin-bottom:20px; padding:14px 20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span style="font-weight:700; font-size:0.95rem; color:var(--text-main); display:flex; align-items:center; gap:6px;">
-              <i data-lucide="cloud" style="color:var(--primary-cyan); width:18px; height:18px;"></i> Google Sheets Gateway
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <span style="font-size:0.75rem; color:#34d399; background:rgba(52,211,153,0.1); border:1px solid rgba(52,211,153,0.3); padding:3px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:5px;">
+              <span style="width:6px; height:6px; border-radius:50%; background:#34d399; display:inline-block;"></span>
+              Google Sheets Logging: Active
             </span>
-            <span class="badge badge-success" id="sheetStatusBadge" style="font-size:0.75rem;">CONNECTED</span>
-          </div>
-
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn-cyan" onclick="logGoogleSheetsSnapshot()" title="Immediately send a snapshot of current telemetry to Google Sheets">
-              <i data-lucide="send"></i> Log Snapshot Now
+            <span id="telemetryCountBadge" class="badge" style="font-size:0.75rem;">0 / 50 RECORDS</span>
+            <a href="/api/export?range=all" download class="btn btn-primary btn-sm" style="text-decoration:none;">
+              <i data-lucide="download"></i> Export Full CSV
+            </a>
+            <button onclick="syncToGoogleSheets()" class="btn btn-sm" style="background:#059669; color:#fff; border:none; display:inline-flex; align-items:center; gap:4px; font-weight:600; cursor:pointer; padding:6px 12px; border-radius:6px;" title="Push current snapshot to Google Sheet">
+              <i data-lucide="table"></i> Push to Sheet
             </button>
-            <button class="btn btn-primary" onclick="syncGoogleSheetsData()" title="Fetch all stored rows directly from Google Sheet">
-              <i data-lucide="download-cloud"></i> Sync from Sheets
+            <button onclick="syncFromGoogleSheets()" class="btn btn-sm" style="background:#2563eb; color:#fff; border:none; display:inline-flex; align-items:center; gap:4px; font-weight:600; cursor:pointer; padding:6px 12px; border-radius:6px;" title="Fetch records stored in Google Sheet into this table">
+              <i data-lucide="refresh-cw"></i> Sync from Sheet
             </button>
-            <button class="btn btn-dark" onclick="toggleSheetConfigPanel()" title="Configure and Test Google Apps Script Webhook">
-              <i data-lucide="settings"></i> Webhook &amp; Test
-            </button>
+            <a href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; border-color:rgba(52,211,153,0.4); color:#34d399;">
+              <i data-lucide="external-link"></i> Open Sheet
+            </a>
           </div>
         </div>
 
-        <!-- Collapsible Webhook Settings & Testing Panel -->
-        <div id="sheetConfigPanel" style="display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-color);">
-          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-bottom:14px;">
-            <div>
-              <label style="font-size:0.8rem; font-weight:600; color:var(--text-muted); display:block; margin-bottom:6px;">Google Apps Script Web App URL (Webhook)</label>
-              <input type="text" id="cfgWebhookUrl" class="input-field" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%;">
-            </div>
-            <div>
-              <label style="font-size:0.8rem; font-weight:600; color:var(--text-muted); display:block; margin-bottom:6px;">Google Spreadsheet Embed / Share URL</label>
-              <input type="text" id="cfgEmbedUrl" class="input-field" placeholder="https://docs.google.com/spreadsheets/d/.../edit?usp=sharing" style="width:100%;">
-            </div>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-cyan" onclick="saveGoogleSheetsConfig()">Save Configuration</button>
-              <button class="btn btn-dark" onclick="testGoogleSheetsWebhook()">⚡ Test Connection</button>
-            </div>
-            <div id="cfgTestResult" style="font-size:0.85rem; font-family:var(--font-mono); color:var(--text-muted);">
-              Ready to test.
-            </div>
-          </div>
-
-          <div style="margin-top:12px; padding:10px 14px; background:rgba(59, 130, 246, 0.08); border:1px solid rgba(59, 130, 246, 0.2); border-radius:8px; font-size:0.8rem; color:var(--text-muted);">
-            💡 <strong>Troubleshooting Note:</strong> If the embedded sheet shows <em>Access Denied</em> or fails to load, open your Google Sheet, click <strong>Share</strong> (top-right) &rarr; General access &rarr; Set to <strong>"Anyone with the link can view"</strong>.
-          </div>
-        </div>
-      </div>
-
-      <!-- Google Sheets Interactive Analysis Graph Panel -->
-      <div class="panel" style="margin-bottom:24px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <i data-lucide="line-chart" style="color:var(--primary-cyan)"></i>
-            <h2>Google Sheets Telemetry Analytics &amp; Trend Graph</h2>
-          </div>
-
-          <div class="toolbar-group">
-            <div class="btn-group">
-              <button class="btn-sm active" id="btnSheetMetricPower" onclick="setSheetChartMetric('power', this)">Active Power (W)</button>
-              <button class="btn-sm" id="btnSheetMetricEnergy" onclick="setSheetChartMetric('energy', this)">Energy (kWh)</button>
-              <button class="btn-sm" id="btnSheetMetricPF" onclick="setSheetChartMetric('pf', this)">Power Factor</button>
-              <button class="btn-sm" id="btnSheetMetricVoltage" onclick="setSheetChartMetric('voltage', this)">Voltage (V)</button>
-              <button class="btn-sm" id="btnSheetMetricCurrent" onclick="setSheetChartMetric('current', this)">Current (A)</button>
-            </div>
-            <button class="btn btn-cyan" onclick="fetchSheetAnalyticsData()" title="Reload Google Sheets Data">
-              <i data-lucide="refresh-cw"></i> Refresh Data
-            </button>
-          </div>
-        </div>
-
-        <div class="chart-container" style="height:360px;">
-          <canvas id="sheetAnalyticsChart"></canvas>
-        </div>
-      </div>
-
-      <!-- Live Google Sheets Telemetry Data Table -->
-      <div class="panel" style="margin-bottom:24px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <i data-lucide="table" style="color:var(--accent-green)"></i>
-            <h2>Live Google Sheets Telemetry Table</h2>
-          </div>
-
-          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-            <input type="text" id="sheetTableSearch" placeholder="Search rows..." oninput="filterSheetTable()" class="input-field" style="padding:6px 12px; font-size:0.85rem; width:180px;">
-            <button class="btn btn-dark btn-sm" onclick="exportSheetTableCSV()" title="Download table rows as CSV">
-              <i data-lucide="download"></i> Export CSV
-            </button>
-          </div>
-        </div>
-
-        <div style="overflow-x:auto; max-height:420px; border-radius:8px; border:1px solid var(--border-color);">
-          <table id="sheetTelemetryTable" style="width:100%; border-collapse:collapse; font-size:0.875rem; text-align:left; font-family:var(--font-mono);">
+        <div style="overflow-x:auto; max-height:360px; border-radius:8px; border:1px solid var(--border-color); margin-top:12px;">
+          <table style="width:100%; border-collapse:collapse; font-size:0.825rem; text-align:left; font-family:var(--font-mono);">
             <thead>
               <tr style="background:var(--bg-card-hover); color:var(--text-muted); border-bottom:1px solid var(--border-color); position:sticky; top:0; z-index:2;">
-                <th style="padding:10px 14px;">Timestamp</th>
+                <th style="padding:10px 14px;">Date</th>
+                <th style="padding:10px 14px;">Time</th>
                 <th style="padding:10px 14px;">Device ID</th>
                 <th style="padding:10px 14px;">Voltage (V)</th>
                 <th style="padding:10px 14px;">Current (A)</th>
@@ -477,48 +362,18 @@
                 <th style="padding:10px 14px;">Status</th>
               </tr>
             </thead>
-            <tbody id="sheetTableBody">
+            <tbody id="telemetryLiveTableBody">
               <tr>
-                <td colspan="9" style="padding:24px; text-align:center; color:var(--text-muted);">
-                  Loading Google Sheets telemetry records...
+                <td colspan="10" style="padding:24px; text-align:center; color:var(--text-muted);">
+                  Waiting for telemetry packets... (Website updates 1-by-1)
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
-
-      <!-- Live Google Sheets Embedded Spreadsheet View -->
-      <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:20px; margin-bottom:24px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
-          <div>
-            <h2 style="font-size:1.25rem; font-weight:700; display:flex; align-items:center; gap:8px; margin:0;">
-              <span>📊</span> Live Google Spreadsheet View
-            </h2>
-            <p style="font-size:0.875rem; color:var(--text-muted); margin:6px 0 0 0;">
-              Real-time telemetry readings from ESP32 automatically logged and synchronized to Google Cloud.
-            </p>
-          </div>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <button class="btn btn-dark btn-sm" onclick="reloadGoogleSheetIframe()" title="Reload embedded spreadsheet">
-              <i data-lucide="refresh-cw"></i> Reload Frame
-            </button>
-            <a id="sheetExternalLink" href="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?usp=sharing" target="_blank" class="theme-toggle-btn" style="display:inline-flex; align-items:center; gap:6px; text-decoration:none; padding:8px 16px; border-radius:8px; font-weight:700; font-size:0.875rem; border:1px solid var(--border-color);">
-              <span>Open in Google Sheets ↗</span>
-            </a>
-          </div>
-        </div>
-
-        <div style="width:100%; height:600px; border-radius:10px; overflow:hidden; border:1px solid var(--border-color); background:#0f172a;">
-          <iframe 
-            id="googleSheetFrame"
-            src="https://docs.google.com/spreadsheets/d/1HfwPPmaKPXMQbgyVnA0lcn1-Qb0trAjJqRtT_kI4Rac/edit?gid=0&embedded=true&rm=minimal" 
-            style="width:100%; height:100%; border:none;"
-            allowfullscreen>
-          </iframe>
-        </div>
-      </div>
     </div>
+  </div>
 
     <!-- Footer -->
     <footer>

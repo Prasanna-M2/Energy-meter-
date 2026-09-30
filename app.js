@@ -597,37 +597,207 @@ function initHistoryChart() {
     type: 'line',
     data: {
       labels: [],
-      datasets: [{
-        label: 'Active Power (Watts)',
-        data: [],
-        borderColor: '#00e676',
-        backgroundColor: 'rgba(0, 230, 118, 0.12)',
-        borderWidth: 2,
-        fill: true,
-        tension: 0.35
-      }]
+      datasets: [
+        {
+          label: 'Power (W)',
+          data: [],
+          borderColor: '#00e676',
+          backgroundColor: 'rgba(0, 230, 118, 0.12)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.35,
+          yAxisID: 'y'
+        },
+        {
+          label: 'Voltage (V)',
+          data: [],
+          borderColor: '#ff9800',
+          backgroundColor: 'rgba(255, 152, 0, 0.08)',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.35,
+          yAxisID: 'yVoltage'
+        },
+        {
+          label: 'Current (A)',
+          data: [],
+          borderColor: '#00f2fe',
+          backgroundColor: 'rgba(0, 242, 254, 0.08)',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.35,
+          yAxisID: 'yCurrent'
+        },
+        {
+          label: 'Power Factor (PF)',
+          data: [],
+          borderColor: '#c084fc',
+          backgroundColor: 'rgba(192, 132, 252, 0.08)',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.35,
+          yAxisID: 'yPF'
+        }
+      ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: {
+            color: '#94a3b8',
+            font: { family: 'JetBrains Mono', size: 11 },
+            usePointStyle: true,
+            boxWidth: 8
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+          titleFont: { family: 'JetBrains Mono', size: 12 },
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
+          borderColor: 'rgba(56, 189, 248, 0.3)',
+          borderWidth: 1,
+          padding: 10
+        }
+      },
       scales: {
         x: {
           grid: { color: 'rgba(255, 255, 255, 0.05)' },
           ticks: {
             color: '#64748b',
             font: { family: 'JetBrains Mono', size: 10 },
-            maxTicksLimit: 6,
+            maxTicksLimit: 8,
             maxRotation: 0,
             autoSkip: true
           }
         },
-        y: { ticks: { color: '#00e676' } }
+        y: {
+          type: 'linear',
+          position: 'left',
+          title: { display: true, text: 'Power (W)', color: '#00e676', font: { family: 'JetBrains Mono', size: 10 } },
+          ticks: { color: '#00e676', font: { family: 'JetBrains Mono', size: 10 } },
+          grid: { color: 'rgba(255, 255, 255, 0.05)' }
+        },
+        yVoltage: {
+          type: 'linear',
+          position: 'left',
+          title: { display: true, text: 'Voltage (V)', color: '#ff9800', font: { family: 'JetBrains Mono', size: 10 } },
+          ticks: { color: '#ff9800', font: { family: 'JetBrains Mono', size: 10 } },
+          grid: { drawOnChartArea: false }
+        },
+        yCurrent: {
+          type: 'linear',
+          position: 'right',
+          title: { display: true, text: 'Current (A)', color: '#00f2fe', font: { family: 'JetBrains Mono', size: 10 } },
+          ticks: { color: '#00f2fe', font: { family: 'JetBrains Mono', size: 10 } },
+          grid: { drawOnChartArea: false }
+        },
+        yPF: {
+          type: 'linear',
+          position: 'right',
+          min: 0,
+          max: 1.1,
+          title: { display: true, text: 'PF', color: '#c084fc', font: { family: 'JetBrains Mono', size: 10 } },
+          ticks: { color: '#c084fc', font: { family: 'JetBrains Mono', size: 10 } },
+          grid: { drawOnChartArea: false }
+        }
       }
     }
   });
 
   fetchHistoryRange('7d');
 }
+
+function setHistoryChartType(type, btnElement) {
+  if (btnElement && btnElement.parentElement) {
+    btnElement.parentElement.querySelectorAll('.btn-sm').forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+  }
+  if (!state.historyChart) return;
+  
+  if (type === 'bar') {
+    state.historyChart.config.type = 'bar';
+    state.historyChart.data.datasets.forEach(ds => {
+      ds.stepped = false;
+      ds.fill = false;
+    });
+  } else if (type === 'step') {
+    state.historyChart.config.type = 'line';
+    state.historyChart.data.datasets.forEach(ds => {
+      ds.stepped = 'middle';
+    });
+  } else {
+    state.historyChart.config.type = 'line';
+    state.historyChart.data.datasets.forEach(ds => {
+      ds.stepped = false;
+    });
+  }
+  state.historyChart.update();
+}
+
+window.setHistorySignal = function(signal, btnElement) {
+  if (btnElement && btnElement.parentElement) {
+    btnElement.parentElement.querySelectorAll('.btn-sm').forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+  }
+  if (!state.historyChart) return;
+
+  const chart = state.historyChart;
+  const ds = chart.data.datasets;
+  if (!ds || ds.length < 4) return;
+
+  if (signal === 'all') {
+    ds.forEach(d => d.hidden = false);
+    if (chart.options.scales.y) chart.options.scales.y.display = true;
+    if (chart.options.scales.yVoltage) chart.options.scales.yVoltage.display = true;
+    if (chart.options.scales.yCurrent) chart.options.scales.yCurrent.display = true;
+    if (chart.options.scales.yPF) chart.options.scales.yPF.display = true;
+  } else if (signal === 'power') {
+    ds[0].hidden = false;
+    ds[1].hidden = true;
+    ds[2].hidden = true;
+    ds[3].hidden = true;
+    if (chart.options.scales.y) chart.options.scales.y.display = true;
+    if (chart.options.scales.yVoltage) chart.options.scales.yVoltage.display = false;
+    if (chart.options.scales.yCurrent) chart.options.scales.yCurrent.display = false;
+    if (chart.options.scales.yPF) chart.options.scales.yPF.display = false;
+  } else if (signal === 'voltage') {
+    ds[0].hidden = true;
+    ds[1].hidden = false;
+    ds[2].hidden = true;
+    ds[3].hidden = true;
+    if (chart.options.scales.y) chart.options.scales.y.display = false;
+    if (chart.options.scales.yVoltage) chart.options.scales.yVoltage.display = true;
+    if (chart.options.scales.yCurrent) chart.options.scales.yCurrent.display = false;
+    if (chart.options.scales.yPF) chart.options.scales.yPF.display = false;
+  } else if (signal === 'current') {
+    ds[0].hidden = true;
+    ds[1].hidden = true;
+    ds[2].hidden = false;
+    ds[3].hidden = true;
+    if (chart.options.scales.y) chart.options.scales.y.display = false;
+    if (chart.options.scales.yVoltage) chart.options.scales.yVoltage.display = false;
+    if (chart.options.scales.yCurrent) chart.options.scales.yCurrent.display = true;
+    if (chart.options.scales.yPF) chart.options.scales.yPF.display = false;
+  } else if (signal === 'pf') {
+    ds[0].hidden = true;
+    ds[1].hidden = true;
+    ds[2].hidden = true;
+    ds[3].hidden = false;
+    if (chart.options.scales.y) chart.options.scales.y.display = false;
+    if (chart.options.scales.yVoltage) chart.options.scales.yVoltage.display = false;
+    if (chart.options.scales.yCurrent) chart.options.scales.yCurrent.display = false;
+    if (chart.options.scales.yPF) chart.options.scales.yPF.display = true;
+  }
+  chart.update();
+};
 
 // ----------------------------------------------------
 // 5. LIVE TELEMETRY DOM UPDATE
@@ -857,7 +1027,10 @@ function renderHistoryRecords(records) {
   });
 
   state.historyChart.data.labels = labels;
-  state.historyChart.data.datasets[0].data = sampled.map(r => r.power);
+  state.historyChart.data.datasets[0].data = sampled.map(r => r.power || 0);
+  if (state.historyChart.data.datasets[1]) state.historyChart.data.datasets[1].data = sampled.map(r => r.voltage || 0);
+  if (state.historyChart.data.datasets[2]) state.historyChart.data.datasets[2].data = sampled.map(r => r.current || 0);
+  if (state.historyChart.data.datasets[3]) state.historyChart.data.datasets[3].data = sampled.map(r => r.pf || 0);
   state.historyChart.update();
 
   const powers = records.map(r => r.power);
@@ -881,14 +1054,26 @@ function renderHistoryRecords(records) {
   if (elV) elV.textContent = `${minVolt} - ${maxVolt}`;
 }
 
-function clearHistoryData() {
+async function clearHistoryData() {
   if (!confirm('Are you sure you want to clear stored telemetry history?')) return;
-  const transaction = state.db.transaction(['telemetry'], 'readwrite');
-  transaction.objectStore('telemetry').clear().onsuccess = () => {
-    alert('Database history cleared.');
-    fetchHistoryRange('7d');
-    updateStorageProgress();
-  };
+  try {
+    await fetch('/api/telemetry/clear', { method: 'POST' });
+  } catch (e) {
+    console.warn('Server clear notice:', e.message);
+  }
+
+  if (state.db) {
+    try {
+      const transaction = state.db.transaction(['telemetry'], 'readwrite');
+      transaction.objectStore('telemetry').clear();
+    } catch (_) {}
+  }
+
+  state.sheetDataCache = [];
+  alert('All sample and stored telemetry records have been cleared!');
+  fetchHistoryRange('7d');
+  updateStorageProgress();
+  if (typeof updateLiveTelemetryTable === 'function') updateLiveTelemetryTable();
 }
 
 // ----------------------------------------------------
@@ -1228,9 +1413,15 @@ async function saveGoogleSheetsConfig() {
       const iframe = document.getElementById('googleSheetFrame');
       const extLink = document.getElementById('sheetExternalLink');
       if (iframe && embed_url) {
-        let embedSrc = embed_url.replace('/edit?usp=sharing', '/edit?embedded=true&rm=minimal');
-        if (!embedSrc.includes('gid=')) embedSrc += '&gid=0';
+        let embedSrc = embed_url;
+        if (embedSrc.includes('/edit')) {
+          embedSrc = embedSrc.split('/edit')[0] + '/htmlembed?widget=true';
+        } else if (!embedSrc.includes('htmlembed') && !embedSrc.includes('pubhtml')) {
+          embedSrc += '/htmlembed?widget=true';
+        }
         iframe.src = embedSrc;
+
+
       }
       if (extLink && embed_url) extLink.href = embed_url;
 
@@ -1280,4 +1471,80 @@ function reloadGoogleSheetIframe() {
     setTimeout(() => { iframe.src = src; }, 100);
   }
 }
+
+// Live Telemetry 50-Item FIFO Rendering Loop for index.html
+async function updateLiveTelemetryTable() {
+  try {
+    const res = await fetch('/api/telemetry/recent');
+    if (!res.ok) return;
+    const json = await res.json();
+    const tbody = document.getElementById('telemetryLiveTableBody');
+    const badge = document.getElementById('telemetryCountBadge');
+    if (!tbody) return;
+
+    if (json.records && json.records.length > 0) {
+      if (badge) badge.textContent = `${json.records.length} / 50 RECORDS`;
+      tbody.innerHTML = json.records.map(r => `
+        <tr style="border-bottom:1px solid rgba(125,125,125,0.1);">
+          <td style="padding:8px 12px; color:var(--text-muted);">${r.date}</td>
+          <td style="padding:8px 12px; font-weight:600; color:var(--text-main);">${r.time}</td>
+          <td style="padding:8px 12px; color:var(--primary-cyan);">${r.deviceId}</td>
+          <td style="padding:8px 12px; color:var(--accent-orange); font-weight:600;">${r.voltage.toFixed(1)} V</td>
+          <td style="padding:8px 12px; color:var(--primary-blue); font-weight:600;">${r.current.toFixed(2)} A</td>
+          <td style="padding:8px 12px; color:var(--accent-orange); font-weight:700;">${r.power.toFixed(1)} W</td>
+          <td style="padding:8px 12px; color:var(--accent-purple); font-weight:600;">${r.energy.toFixed(4)} kWh</td>
+          <td style="padding:8px 12px; color:var(--accent-green);">${r.frequency.toFixed(1)} Hz</td>
+          <td style="padding:8px 12px; color:var(--primary-cyan);">${r.pf.toFixed(2)}</td>
+          <td style="padding:8px 12px;">
+            <span class="badge ${r.status === 'ONLINE' ? 'badge-success' : 'badge-danger'}" style="font-size:0.65rem; padding:2px 8px;">
+              ${r.status}
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    } else {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="10" style="padding:24px; text-align:center; color:var(--text-muted);">
+            Waiting for telemetry packets... (Website updates 1-by-1)
+          </td>
+        </tr>
+      `;
+    }
+  } catch (err) {
+    console.warn('Telemetry table update notice:', err.message);
+  }
+}
+
+setInterval(updateLiveTelemetryTable, 1000);
+document.addEventListener('DOMContentLoaded', updateLiveTelemetryTable);
+
+window.syncToGoogleSheets = async function() {
+  try {
+    const res = await fetch('/api/sheets/log-now', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.status === 'success') {
+      alert('Snapshot successfully logged to Google Sheet!');
+    } else {
+      alert(data.message || 'Logged snapshot to Google Sheet');
+    }
+  } catch (e) {
+    alert('Sync error: ' + e.message);
+  }
+};
+
+window.syncFromGoogleSheets = async function() {
+  try {
+    const res = await fetch('/api/sheets/sync');
+    const data = await res.json();
+    if (res.ok && data.status === 'success') {
+      alert(`Synchronized ${data.total_rows} records from Google Sheets!`);
+      updateLiveTelemetryTable();
+    } else {
+      alert(data.message || 'Synced records');
+    }
+  } catch (e) {
+    alert('Sync error: ' + e.message);
+  }
+};
 

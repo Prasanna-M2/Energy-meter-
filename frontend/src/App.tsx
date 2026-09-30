@@ -130,47 +130,77 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [lastDataTimestamp]);
 
+  const [scrollProgress, setScrollProgress] = useState<number>(0);
+
+  // Track window scroll progress for top scroll bar animation
+  useEffect(() => {
+    const handleScroll = () => {
+      const totalScroll = document.documentElement.scrollHeight - window.innerHeight;
+      if (totalScroll > 0) {
+        setScrollProgress((window.scrollY / totalScroll) * 100);
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   return (
-    <div className="min-h-screen max-w-7xl mx-auto p-4 md:p-6 flex flex-col gap-5">
-      {/* 1. Header */}
-      <Header
-        deviceId={deviceId}
-        onDeviceChange={setDeviceId}
-        availableDevices={availableDevices}
-        wsStatus={wsStatus}
-        deviceOnlineStatus={deviceOnlineStatus}
-        lastUpdateSec={secondsSinceLastData}
-        theme={theme}
-        onToggleTheme={toggleTheme}
+    <div className="min-h-screen max-w-7xl mx-auto p-4 md:p-6 flex flex-col gap-5 relative">
+      {/* Top Scroll Indicator Progress Bar */}
+      <div 
+        className="fixed top-0 left-0 h-1 bg-gradient-to-r from-[#00f2fe] via-[#3b82f6] to-[#00e676] z-50 transition-all duration-75"
+        style={{ width: `${scrollProgress}%` }}
       />
+
+      {/* 1. Header */}
+      <div className="animate-fade-in">
+        <Header
+          deviceId={deviceId}
+          onDeviceChange={setDeviceId}
+          availableDevices={availableDevices}
+          wsStatus={wsStatus}
+          deviceOnlineStatus={deviceOnlineStatus}
+          lastUpdateSec={secondsSinceLastData}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+      </div>
 
       {/* 2. Live Measurements: Exactly 4 cards */}
-      <MetricCards
-        telemetry={currentTelemetry}
-        isOnline={deviceOnlineStatus === 'ONLINE'}
-      />
+      <div className="animate-slide-up" style={{ animationDelay: '0.05s' }}>
+        <MetricCards
+          telemetry={currentTelemetry}
+          isOnline={deviceOnlineStatus === 'ONLINE'}
+        />
+      </div>
 
       {/* 3. Real-Time Waveform */}
-      <RealtimeWaveform
-        dataPoints={waveformBuffer}
-        theme={theme}
-        isPaused={isWaveformPaused}
-        onTogglePause={() => setIsWaveformPaused((prev) => !prev)}
-      />
+      <div className="animate-slide-up" style={{ animationDelay: '0.1s' }}>
+        <RealtimeWaveform
+          dataPoints={waveformBuffer}
+          theme={theme}
+          isPaused={isWaveformPaused}
+          onTogglePause={() => setIsWaveformPaused((prev) => !prev)}
+        />
+      </div>
 
       {/* 4. 7-Day History */}
-      <HistoryView
-        deviceId={deviceId}
-        theme={theme}
-      />
+      <div className="animate-slide-up" style={{ animationDelay: '0.15s' }}>
+        <HistoryView
+          deviceId={deviceId}
+          theme={theme}
+        />
+      </div>
 
       {/* 5. Device Status Footer */}
-      <DeviceStatus
-        deviceId={deviceId}
-        status={deviceOnlineStatus}
-        rssi={currentTelemetry?.rssi}
-        lastSeenSec={secondsSinceLastData}
-      />
+      <div className="animate-slide-up" style={{ animationDelay: '0.2s' }}>
+        <DeviceStatus
+          deviceId={deviceId}
+          status={deviceOnlineStatus}
+          rssi={currentTelemetry?.rssi}
+          lastSeenSec={secondsSinceLastData}
+        />
+      </div>
     </div>
   );
 };

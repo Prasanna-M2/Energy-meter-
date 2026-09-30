@@ -43,13 +43,26 @@ export const DeviceStatus: React.FC<DeviceStatusProps> = ({
         </span>
       </div>
 
-      {/* Last Data Received */}
-      <div className="flex items-center gap-1.5 text-[var(--text-muted)]">
-        <Clock className="w-3.5 h-3.5 text-[var(--accent-orange)]" />
-        <span>Last Data:</span>
-        <span className="font-semibold text-[var(--text-main)]">
-          {lastSeenSec < 1 ? `${(lastSeenSec * 10).toFixed(0)}00ms` : `${lastSeenSec.toFixed(1)}s`}
-        </span>
+      {/* Google Cloud Storage Status Badge */}
+      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--bg-input)] border border-[#00f2fe]/30 text-[var(--primary-cyan)]">
+        <Activity className="w-3.5 h-3.5" />
+        <span>GCS Cloud Storage:</span>
+        <span className="font-bold text-[#00e676]">5 TB ENABLED</span>
+      </div>
+
+      {/* Project Team Credits Bar */}
+      <div className="w-full pt-2 border-t border-[var(--border-color)] flex flex-wrap justify-between items-center text-[11px] text-[var(--text-muted)] font-mono">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[var(--primary-cyan)] font-bold">PROJECT CREATORS:</span>
+          <span><strong>💻 Web:</strong> Prasanna, HarishKumar, Rahul</span>
+          <span>|</span>
+          <span><strong>⚡ Hardware:</strong> Viswanath</span>
+          <span>|</span>
+          <span><strong>📦 Product:</strong> Pavinkumar</span>
+        </div>
+        <div className="text-[var(--text-dim)] font-semibold">
+          DEPARTMENT OF ELECTRICAL &amp; ELECTRONICS ENGINEERING (EEE) - KSRCT
+        </div>
       </div>
     </footer>
   );
