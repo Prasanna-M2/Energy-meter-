@@ -36,7 +36,7 @@
           <div style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); margin-top:2px;">
             <span style="color:var(--primary-cyan); font-weight:600;">💻 Web:</span> Prasanna, HarishKumar, Rahul &nbsp;•&nbsp;
             <span style="color:#00e676; font-weight:600;">⚡ Hardware:</span> Viswanath &nbsp;•&nbsp;
-            <span style="color:#ff9800; font-weight:600;">📦 Product:</span> Pavinkumar
+            <span style="color:#ff9800; font-weight:600;">🐣 Product:</span> <strong>Pavinkumar</strong>
           </div>
         </div>
       </div>
@@ -288,10 +288,16 @@
           <div class="panel-title">
             <i data-lucide="database" style="color:var(--accent-green)"></i>
             <h2>Historical Telemetry Analysis &amp; Storage Retention</h2>
+            <span class="badge" id="historySourceBadge" style="font-size:0.7rem; font-family:var(--font-mono); background:rgba(59,130,246,0.15); color:#3b82f6; border:1px solid rgba(59,130,246,0.3); display:none; margin-left:8px;">
+              ☁️ CLOUD SYNC ACTIVE
+            </span>
           </div>
 
           <div class="toolbar-group">
             <div class="btn-group">
+              <button class="btn-sm" id="btnRange8h" onclick="fetchHistoryRange('8h', this)" style="display:inline-flex; align-items:center; gap:4px; font-weight:600; color:#38bdf8;">
+                <i data-lucide="cloud" style="width:13px; height:13px;"></i> 8 Hours (Cloud)
+              </button>
               <button class="btn-sm" onclick="fetchHistoryRange('1d', this)">1 Day</button>
               <button class="btn-sm" onclick="fetchHistoryRange('3d', this)">3 Days</button>
               <button class="btn-sm active" onclick="fetchHistoryRange('7d', this)">7 Days</button>
@@ -540,20 +546,23 @@
 
               <!-- Quick Prompt Chips -->
               <div class="chat-chips">
-                <button class="chat-chip" onclick="insertQuickPrompt('What is the condition of my load right now?')">
-                  ⚡ Condition of my load?
+                <button class="chat-chip" onclick="insertQuickPrompt('What is the current condition of my electrical load?')">
+                  ⚡ Live Load Diagnosis
                 </button>
-                <button class="chat-chip" onclick="insertQuickPrompt('Is my load inductive or resistive?')">
-                  🔄 Inductive or Resistive?
+                <button class="chat-chip" onclick="insertQuickPrompt('Is my load inductive or resistive and what is the difference?')">
+                  🔄 Inductive vs Resistive
                 </button>
-                <button class="chat-chip" onclick="insertQuickPrompt('Is my power factor healthy or losing efficiency?')">
-                  📊 Check Power Factor
+                <button class="chat-chip" onclick="insertQuickPrompt('How can I calculate and improve my power factor?')">
+                  📊 Improve Power Factor
                 </button>
-                <button class="chat-chip" onclick="insertQuickPrompt('Detect any thermal overload or voltage risks.')">
-                  ⚠️ Overload &amp; Voltage Safety
+                <button class="chat-chip" onclick="insertQuickPrompt('How can I reduce my monthly electricity bill?')">
+                  💡 Tips to Save Electricity
                 </button>
-                <button class="chat-chip" onclick="insertQuickPrompt('How can I reduce the monthly electricity bill?')">
-                  💡 Tariff &amp; Savings Tips
+                <button class="chat-chip" onclick="insertQuickPrompt('Explain how to wire the ESP32 to the PZEM-004T sensor.')">
+                  🔌 ESP32 &amp; PZEM Wiring
+                </button>
+                <button class="chat-chip" onclick="insertQuickPrompt('Who created and developed this project?')">
+                  👥 Project Developers
                 </button>
               </div>
 
@@ -605,8 +614,9 @@
     <div style="padding:10px 16px; border-top:1px solid var(--border-color);">
       <div class="chat-chips" style="padding-bottom:4px;">
         <button class="chat-chip" onclick="insertDrawerPrompt('What is my current load condition?')">⚡ Current load?</button>
-        <button class="chat-chip" onclick="insertDrawerPrompt('Is power factor optimal?')">📊 Power factor?</button>
-        <button class="chat-chip" onclick="insertDrawerPrompt('Any anomalies?')">⚠️ Check safety</button>
+        <button class="chat-chip" onclick="insertDrawerPrompt('How do I improve power factor?')">📊 Power factor tips</button>
+        <button class="chat-chip" onclick="insertDrawerPrompt('How to reduce monthly power bill?')">💡 Save electricity</button>
+        <button class="chat-chip" onclick="insertDrawerPrompt('Who developed this system?')">👥 Creators</button>
       </div>
       <div class="chat-input-bar">
         <input type="text" id="drawerChatInput" class="input-field" placeholder="Ask about load..." onkeydown="handleDrawerKeyDown(event)">

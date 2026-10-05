@@ -71,9 +71,8 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-[var(--text-dim)]">•</span>
             <span className="text-[#00e676] font-semibold">⚡ Hardware:</span>
             <span className="text-[var(--text-main)] font-medium">Viswanath</span>
-            <span className="text-[var(--text-dim)]">•</span>
-            <span className="text-[#ff9800] font-semibold">📦 Product:</span>
-            <span className="text-[var(--text-main)] font-medium">Pavinkumar</span>
+            <span className="text-[#ff9800] font-semibold">🐣 Product:</span>
+            <span className="text-[var(--text-main)] font-medium"><strong>Pavinkumar</strong></span>
           </div>
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] font-mono">
             <Cpu className="w-3.5 h-3.5 text-[var(--primary-blue)]" />

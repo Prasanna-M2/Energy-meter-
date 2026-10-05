@@ -995,30 +995,48 @@ async function fetchHistoryRange(rangeStr, btnElement) {
     btnElement.classList.add('active');
   }
 
+  const badge = document.getElementById('historySourceBadge');
+  if (badge) {
+    badge.style.display = 'inline-flex';
+    badge.textContent = rangeStr === '8h' ? '☁️ FETCHING CLOUD DATA (8 HOURS)...' : `SYNCING ${rangeStr.toUpperCase()}...`;
+  }
+
   try {
-    const res = await fetch(`/api/history?range=${rangeStr}`);
+    const res = await fetch(`/api/history?range=${rangeStr}&source=${rangeStr === '8h' ? 'cloud' : 'auto'}`);
     if (res.ok) {
       const json = await res.json();
       if (json.data && json.data.length > 0) {
+        if (badge) {
+          badge.textContent = json.source === 'google_sheets_cloud' 
+            ? `☁️ CLOUD SYNC ACTIVE · ${json.count} PTS (8 HOURS)` 
+            : `📊 RETENTION ARCHIVE · ${json.count} PTS (${rangeStr.toUpperCase()})`;
+          badge.style.background = json.source === 'google_sheets_cloud' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(52, 211, 153, 0.15)';
+          badge.style.color = json.source === 'google_sheets_cloud' ? '#38bdf8' : '#34d399';
+        }
         renderHistoryRecords(json.data);
         return;
       }
     }
   } catch (e) {
-    console.log('Fetching from local IndexedDB...');
+    console.log('Fetching from local IndexedDB fallback...');
   }
 
   if (!state.db) return;
-  let days = 7;
-  if (rangeStr === '1d') days = 1;
-  if (rangeStr === '3d') days = 3;
+  let durationMs = 7 * 24 * 60 * 60 * 1000;
+  if (rangeStr === '8h') durationMs = 8 * 60 * 60 * 1000;
+  else if (rangeStr === '1d') durationMs = 24 * 60 * 60 * 1000;
+  else if (rangeStr === '3d') durationMs = 3 * 24 * 60 * 60 * 1000;
 
-  const startTime = Date.now() - (days * 24 * 60 * 60 * 1000);
+  const startTime = Date.now() - durationMs;
   const transaction = state.db.transaction(['telemetry'], 'readonly');
   const index = transaction.objectStore('telemetry').index('timestamp');
 
   index.getAll(IDBKeyRange.lowerBound(startTime)).onsuccess = (e) => {
-    renderHistoryRecords(e.target.result);
+    const records = e.target.result || [];
+    if (badge) {
+      badge.textContent = `LOCAL RETENTION · ${records.length} PTS (${rangeStr.toUpperCase()})`;
+    }
+    renderHistoryRecords(records);
   };
 }
 

@@ -541,6 +541,86 @@ app.get('/api/statistics', (req, res) => {
   res.json(getStatisticsData(deviceId, req.query.range, field));
 });
 
+// Historical Telemetry Query with Multi-Range (8 Hours Cloud, 1 Day, 3 Days, 7 Days)
+app.get('/api/history', async (req, res) => {
+  const rangeLower = (req.query.range || '7d').toLowerCase();
+  const source = req.query.source || 'auto';
+  const now = Date.now();
+
+  let windowMs = 7 * 24 * 60 * 60 * 1000;
+  if (rangeLower === '8h') windowMs = 8 * 60 * 60 * 1000;
+  else if (rangeLower === '1h') windowMs = 1 * 60 * 60 * 1000;
+  else if (rangeLower === '6h') windowMs = 6 * 60 * 60 * 1000;
+  else if (rangeLower === '1d') windowMs = 24 * 60 * 60 * 1000;
+  else if (rangeLower === '3d') windowMs = 3 * 24 * 60 * 60 * 1000;
+  else if (rangeLower === '7d') windowMs = 7 * 24 * 60 * 60 * 1000;
+
+  let records = telemetryRecords.filter(r => r.timestamp >= (now - windowMs));
+
+  // If requesting 8h or cloud, or if local cache has few records, query Google Sheet Cloud
+  if (rangeLower === '8h' || source === 'cloud' || records.length < 5) {
+    if (config.googleSheetWebhookUrl) {
+      try {
+        const fetchUrl = config.googleSheetWebhookUrl + (config.googleSheetWebhookUrl.includes('?') ? '&' : '?') + 'action=read&limit=250';
+        const response = await fetch(fetchUrl, { redirect: 'follow' });
+        const text = await response.text();
+        let cloudData;
+        try { cloudData = JSON.parse(text); } catch (_) {}
+
+        if (cloudData && Array.isArray(cloudData.records) && cloudData.records.length > 0) {
+          const cloudRecords = cloudData.records.map((r, i) => {
+            let ts = Date.now() - (cloudData.records.length - i) * 60000;
+            try {
+              const parts = String(r.timestamp).split(', ');
+              if (parts.length === 2) {
+                const [d, m, y] = parts[0].split('/').map(Number);
+                const [hh, mm, ss] = parts[1].split(':').map(Number);
+                ts = new Date(y, m - 1, d, hh, mm, ss).getTime();
+              }
+            } catch (_) {}
+
+            return {
+              id: ts,
+              deviceId: r.device_id || 'ESP32-001',
+              timestamp: ts,
+              voltage: Number(r.voltage) || 0.0,
+              current: Number(r.current) || 0.0,
+              power: Number(r.power) || 0.0,
+              energy: Number(r.energy) || 0.0,
+              frequency: Number(r.frequency) || 50.0,
+              pf: Number(r.pf) || 0.0,
+              status: r.status || (Number(r.voltage) > 5 ? 'ONLINE' : 'OFFLINE')
+            };
+          }).filter(r => r.timestamp >= (now - windowMs));
+
+          if (cloudRecords.length > 0) {
+            const tsMap = new Map();
+            [...records, ...cloudRecords].forEach(r => tsMap.set(r.timestamp, r));
+            records = Array.from(tsMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+            return res.json({
+              status: 'success',
+              source: 'google_sheets_cloud',
+              range: rangeLower,
+              count: records.length,
+              data: records
+            });
+          }
+        }
+      } catch (cloudErr) {
+        console.warn('[Cloud History Sync] Notice:', cloudErr.message);
+      }
+    }
+  }
+
+  res.json({
+    status: 'success',
+    source: 'local_database',
+    range: rangeLower,
+    count: records.length,
+    data: records
+  });
+});
+
 // CSV Export: Export ALL historical records (100% complete dataset without truncation)
 function generateCSV(deviceId, range) {
   // If range is 'all', export everything in telemetryRecords without filtering
@@ -725,40 +805,63 @@ function getAiConfig() {
   return conf;
 }
 
-// Call OpenRouter API with fallback
-async function callOpenRouter(messages, temperature = 0.4, maxTokens = 600) {
+// Call OpenRouter API with multi-model fallback and timeout
+async function callOpenRouter(messages, temperature = 0.65, maxTokens = 750) {
   const { apiKey, model } = getAiConfig();
   if (!apiKey) {
     throw new Error('OpenRouter API key is not configured in data/config.json or .env');
   }
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': 'http://localhost:3000',
-      'X-Title': 'KSRCT EEE Energy Monitor'
-    },
-    body: JSON.stringify({
-      model: model || 'openai/gpt-4o-mini',
-      messages,
-      temperature,
-      max_tokens: maxTokens
-    })
-  });
+  const candidateModels = [
+    model || 'openai/gpt-4o-mini',
+    'google/gemini-2.0-flash-001',
+    'meta-llama/llama-3.3-70b-instruct:free'
+  ];
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenRouter HTTP ${response.status}: ${errText}`);
+  let lastError = null;
+
+  for (const candidateModel of candidateModels) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'http://localhost:3000',
+          'X-Title': 'KSRCT EEE Energy Monitor'
+        },
+        body: JSON.stringify({
+          model: candidateModel,
+          messages,
+          temperature,
+          max_tokens: maxTokens
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errText}`);
+      }
+
+      const data = await response.json();
+      const text = data?.choices?.[0]?.message?.content;
+      if (text && text.trim()) {
+        return text;
+      }
+      throw new Error('Empty response received');
+    } catch (err) {
+      lastError = err;
+      console.warn(`[AI Engine] Attempt with ${candidateModel} failed: ${err.message}. Trying next model...`);
+    }
   }
 
-  const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content;
-  if (!text) {
-    throw new Error('Empty response received from OpenRouter');
-  }
-  return text;
+  throw lastError || new Error('All AI models failed');
 }
 
 // AI Engine Configuration / Status Route
@@ -1003,7 +1106,222 @@ app.get('/api/ai/insights', async (req, res) => {
   return app._router.handle({ ...req, method: 'POST', url: '/api/ai/analyze' }, res);
 });
 
-// Interactive AI Copilot Chat Route (OpenRouter GPT-4o-mini)
+// Intelligent Semantic Local Fallback Engine - Provides distinct, tailored answers for user questions
+function generateLocalAiResponse(userMsg, metrics, deviceState) {
+  const q = String(userMsg || '').toLowerCase().trim();
+
+  // 1. Greetings & Pleasantries
+  if (/^(hi|hello|hey|greetings|good\s*(morning|afternoon|evening)|namaste|vanakkam)\b/i.test(q)) {
+    return `👋 **Hello! Welcome to the KSRCT EEE Smart Energy AI Copilot.**
+
+I am your electrical power quality and energy management assistant. Here is how I can help you:
+• **Real-Time Load Diagnostics**: Analyze active power (${metrics.p} W), voltage (${metrics.v} V), and load category (${metrics.category}).
+• **Power Factor Correction**: Assess reactive power (${metrics.reactivePower} VAR) and recommend capacitor sizing to avoid penalties.
+• **Bill & Tariff Optimization**: Provide actionable strategies to lower monthly kWh consumption.
+• **Hardware & IoT Guidance**: Troubleshooting the ESP32 microcontroller, PZEM-004T module, and CT clamp.
+
+What specific question or electrical parameter would you like to explore?`;
+  }
+
+  // 2. Creators, Project Team & College
+  if (/(who\s*(are|made|created|built|developed|designed)|creator|author|team|developer|project\s*by|about\s*you)/i.test(q)) {
+    return `⚡ **Project Development Team (KSRCT Department of EEE)**
+
+This Smart Industrial IoT Energy Monitor was engineered by:
+• **Web Application & Cloud UI**: Prasanna, HarishKumar, Rahul
+• **Hardware Design & Sensor Interfacing**: Viswanath
+• **Product Architecture & Testing**: Pavinkumar
+• **Department**: Electrical & Electronics Engineering (EEE)
+• **Institution**: K.S. Rangasamy College of Technology (KSRCT)
+
+**System Capabilities:**
+• Dual-core ESP32 sensor acquisition with Modbus RTU interface
+• PZEM-004T high-precision RMS voltage, current, power, and PF measurement
+• Sub-second WebSocket live oscilloscope waveforms (Voltage, Current, Power)
+• 7-day persistent telemetry storage & 5TB Google Cloud Storage archive
+• Integrated AI Load Diagnostic Studio and Copilot`;
+  }
+
+  // 3. Power Factor & Reactive Power
+  if (/(power\s*factor|pf|reactive|var|kvar|apfc|capacitor|phase\s*angle|lagging|leading)/i.test(q)) {
+    const pfVal = metrics.pf;
+    let pfAssessment = '';
+    if (pfVal >= 0.95) {
+      pfAssessment = `Your current power factor of **${pfVal}** is **optimal (near unity)**. Line losses and reactive burden are minimal.`;
+    } else if (pfVal >= 0.85) {
+      pfAssessment = `Your current power factor is **${pfVal}**, representing a normal mixed industrial/commercial load.`;
+    } else {
+      pfAssessment = `Your current power factor is **${pfVal}** (${metrics.category}), indicating substantial inductive reactive burden (${metrics.reactivePower} VAR). This may incur utility penalty surcharges if below 0.85!`;
+    }
+
+    return `📊 **Power Factor (PF) Analysis & Engineering Principles**
+
+${pfAssessment}
+
+**Key Electrical Relationships:**
+• **Formula**: $$\\text{Power Factor} = \\frac{P \\text{ (Active Power in W)}}{S \\text{ (Apparent Power in VA)}} = \\cos \\phi$$
+• **Live Power Triangle**:
+  - Active Power ($P$): **${metrics.p} W** (Useful work done)
+  - Reactive Power ($Q$): **${metrics.reactivePower} VAR** (Magnetizing field in motors/inductors)
+  - Apparent Power ($S$): **${metrics.apparentPower} VA** (Total supplied capacity)
+
+**How to Improve Power Factor:**
+1. **APFC Panel**: Install an Automatic Power Factor Correction panel with shunt capacitor banks.
+2. **Capacitor Rating Formula**:
+   $$Q_c = P \\times (\\tan \\phi_1 - \\tan \\phi_2)$$
+   where $\\phi_1$ is original angle and $\\phi_2$ is target angle (typically $\\cos\\phi_2 = 0.98$).
+3. **Avoid Idling Motors**: Lightly loaded induction motors draw disproportionately high reactive current.`;
+  }
+
+  // 4. Reducing Electricity Bill / Tariff Savings / Costs
+  if (/(save|saving|bill|tariff|cost|reduce|cheap|kwh|rupee|inr|money|expensive|consumption|how to reduce)/i.test(q)) {
+    const monthlyKwh = Number(((metrics.p * 24 * 30) / 1000).toFixed(2));
+    const monthlyCost = Math.round(monthlyKwh * 8.5);
+
+    return `💡 **Practical Strategies to Reduce Your Electricity Bill**
+
+Based on your current power draw of **${metrics.p} W**:
+• **Projected Monthly Energy**: **${monthlyKwh} kWh**
+• **Estimated Monthly Cost (@ ₹8.5/unit)**: **₹ ${monthlyCost.toLocaleString('en-IN')}**
+
+**Top Energy Conservation Steps:**
+1. **Eliminate Phantom / Vampire Loads**: Appliances left on standby (TVs, chargers, microwave clocks) can contribute 5-10% of idle power. Use master switch power strips.
+2. **Shift High-Load Cycles to Off-Peak Hours**: Run washing machines, water pumps, and heavy heaters during off-peak tariff periods if on a Time-of-Day (ToD) tariff.
+3. **Upgrade Lighting to LED**: Replacing remaining compact fluorescent (CFL) or incandescent bulbs with high-efficiency LEDs cuts lighting energy consumption by up to 75%.
+4. **Maintain Induction Motors & Compressors**: Ensure motors have clean cooling fins and proper belt tension. Under-loaded motors waste energy through poor efficiency.
+5. **Optimize Temperature Setpoints**: Setting AC cooling thermostats to 24°C-25°C instead of 18°C saves approximately 6% electricity per degree Celsius.`;
+  }
+
+  // 5. Live Load Diagnosis / Condition / Status
+  if (/(condition|status|what is my load|live|diagnos|how is it running|current load|standby|telemetry)/i.test(q)) {
+    return `⚡ **Live Electrical Load Diagnostic Report**
+
+• **Diagnosed Condition**: **${metrics.condition}**
+• **Load Category**: ${metrics.category}
+• **Efficiency Grade**: **${metrics.efficiencyGrade}** (Health Score: **${metrics.healthScore}/100**)
+• **Active Power ($P$)**: **${metrics.p} W**
+• **RMS Voltage ($V$)**: **${metrics.v} V AC** (Status: ${metrics.gridStability})
+• **RMS Current ($I$)**: **${metrics.i} A** (Thermal Risk: ${metrics.thermalRisk})
+• **Power Factor ($PF$)**: **${metrics.pf}**
+• **Frequency**: **${metrics.f} Hz**
+• **Hardware Status**: ${deviceState.deviceId} is ${deviceState.online ? 'Online' : 'in Standby'}
+
+**Copilot Recommendation**:
+${metrics.p < 5 
+  ? 'The circuit is currently idle with no active electrical load. Plug in an appliance to see real-time current draw and waveforms.'
+  : (metrics.pf < 0.85 
+      ? 'Inductive reactive burden is active. Check motor loads and consider power factor compensation.' 
+      : 'Load operating within healthy efficiency parameters. Line losses are low.')}`;
+  }
+
+  // 6. Inductive vs Resistive Loads
+  if (/(inductive|resistive|capacitive|motor|heater|choke|compressor|type of load)/i.test(q)) {
+    return `🔄 **Inductive vs Resistive Load Classification**
+
+**1. Resistive Loads (Unity Power Factor, PF ≈ 1.0)**:
+• Examples: Electric water heaters, irons, incandescent lamps, toasters.
+• Current and voltage waveforms are completely in phase ($\\phi = 0^\\circ$).
+• Almost 100% of electrical energy is converted into heat or light ($P = S$, $Q = 0$).
+
+**2. Inductive Loads (Lagging Power Factor, PF < 0.90)**:
+• Examples: Induction motors, ceiling fans, refrigerator compressors, transformers, fluorescent chokes.
+• Creates an electromagnetic field; current lags behind voltage.
+• Draws active power ($P$) for work and reactive power ($Q$) to maintain magnetic fields.
+
+**3. Your Current Live Assessment**:
+• Current PF: **${metrics.pf}** (${metrics.category})
+• ${metrics.p < 5 ? 'System is idle in Standby.' : (metrics.pf >= 0.92 ? 'Currently behaving primarily as a clean Resistive load.' : 'Noticeable Inductive characteristics detected.')}`;
+  }
+
+  // 7. Voltage, Frequency, Grid Quality
+  if (/(voltage|volts|current|amps|amperes|frequency|hertz|hz|sag|swell|surge|grid)/i.test(q)) {
+    return `⚡ **Grid Voltage & Electrical Parameters Analysis**
+
+• **RMS Voltage**: **${metrics.v} V AC** (Nominal standard: 230V AC ± 10% -> 207V to 253V)
+• **Grid Status**: **${metrics.gridStability}**
+• **Current Draw**: **${metrics.i} A RMS**
+• **Line Frequency**: **${metrics.f} Hz** (Nominal: 50.0 Hz ± 0.5 Hz)
+
+**Grid Quality Observations**:
+• ${metrics.v < 207 ? '⚠️ **Undervoltage Sag Alert**: Voltage is below 207V. Induction motors will draw increased current to compensate, leading to overheating!' : (metrics.v > 253 ? '⚠️ **Overvoltage Surge Warning**: Voltage exceeds 253V. Sensitive electronic SMPS supplies are at risk of insulation breakdown.' : '✅ **Grid Voltage is Stable**: Voltage is well within the healthy statutory operating window.')}
+• Conductor thermal stress is evaluated as **${metrics.thermalRisk}**.`;
+  }
+
+  // 8. Hardware Setup, ESP32, PZEM-004T
+  if (/(esp32|pzem|sensor|wiring|hardware|pin|gpio|modbus|ct|clamp|connection|schematic)/i.test(q)) {
+    return `🔌 **Hardware Architecture & Wiring Guide**
+
+This system uses an **ESP32 DevKit** paired with a **PZEM-004T V3.0** AC Energy Meter module:
+
+**Pin Connections:**
+• **PZEM 5V** ➔ ESP32 **VIN / 5V**
+• **PZEM GND** ➔ ESP32 **GND**
+• **PZEM TX** ➔ ESP32 **GPIO16 (RX2)**
+• **PZEM RX** ➔ ESP32 **GPIO17 (TX2)**
+
+**High-Voltage AC Sensing:**
+• Connect AC Mains **Live (Phase)** and **Neutral** directly to the PZEM-004T screw terminals (powers the measurement IC and measures voltage).
+• Pass the **Live conductor only** through the 100A non-invasive Current Transformer (CT) clamp. Never pass both Live and Neutral through the CT clamp together, as their magnetic fields will cancel out!
+
+**Communication Protocol**:
+• Modbus RTU over UART at 9600 baud, 8-N-1. Data is polled once per second and streamed to the server via HTTP/WebSocket.`;
+  }
+
+  // 9. Formulas & Calculations
+  if (/(formula|equation|calculate|math|triangle|theory|ohm|kirchhoff|apparent|active)/i.test(q)) {
+    return `📐 **Core Electrical Engineering Formulas**
+
+Here are the mathematical principles used in this energy meter:
+
+1. **Ohm's Law**:
+   $$V = I \\times R$$
+2. **Active Power ($P$ in Watts)**:
+   $$P = V_{\\text{rms}} \\times I_{\\text{rms}} \\times \\cos\\phi$$
+3. **Apparent Power ($S$ in VA)**:
+   $$S = V_{\\text{rms}} \\times I_{\\text{rms}}$$
+4. **Reactive Power ($Q$ in VAR)**:
+   $$Q = \\sqrt{S^2 - P^2} = V_{\\text{rms}} \\times I_{\\text{rms}} \\times \\sin\\phi$$
+5. **Power Factor ($PF$)**:
+   $$PF = \\frac{P}{S} = \\cos\\phi$$
+6. **Electrical Energy ($E$ in kWh)**:
+   $$E = \\frac{P \\times \\text{hours}}{1000}$$
+
+*All calculations in this studio update continuously using high-resolution RMS sampled data.*`;
+  }
+
+  // 10. Thermal Overload & Electrical Safety
+  if (/(overload|thermal|safety|fire|danger|trip|breaker|mcb|safe|heat|temperature)/i.test(q)) {
+    const isSafe = metrics.i < 10;
+    return `🛡️ **Electrical Safety & Overload Assessment**
+
+• **Current Load**: **${metrics.i} A RMS** / **${metrics.p} W**
+• **Conductor Thermal Risk**: **${metrics.thermalRisk}**
+• **Safety Status**: ${isSafe ? '✅ **Normal & Safe Operating Range**' : '⚠️ **High Load / Overload Condition Detected**'}
+
+**Safety Recommendations:**
+1. **Breaker Matching**: Ensure your Miniature Circuit Breaker (MCB) is correctly rated (typically 16A Type C for general circuits, 6A for lighting).
+2. **Conductor Gauge**: For continuous loads over 10A, use copper conductors with at least 2.5 mm² cross-sectional area to prevent insulation thermal degradation.
+3. **Residual Current Device (RCCB)**: Verify a 30mA RCCB is installed to protect personnel against dangerous electric shock and ground leakage currents.`;
+  }
+
+  // 11. General / Direct Answer for User
+  return `⚡ **[AI Copilot Response]**
+
+Regarding your query: **"${userMsg.replace(/[<>]/g, '')}"**
+
+• **Current Circuit Context**:
+  - Measured Voltage: **${metrics.v} V AC**
+  - Active Power Draw: **${metrics.p} W** (Current: **${metrics.i} A**, PF: **${metrics.pf}**)
+  - Current Operating Condition: **${metrics.condition}** (${metrics.category})
+  - Health Rating: **${metrics.healthScore}/100** (Grade: **${metrics.efficiencyGrade}**)
+
+• **Engineering Insight**:
+  Electrical circuits should always balance active power consumption against reactive burden to optimize utility efficiency. For single-phase 230V systems, maintaining a power factor above 0.90 ensures minimal line heating and compliance with energy standards.
+
+Feel free to ask more specific questions about power factor correction, tariff savings, or ESP32 sensor hardware!`;
+}
+
+// Interactive AI Copilot Chat Route (OpenRouter + Local Intelligent Fallback)
 app.post('/api/ai/chat', async (req, res) => {
   const userMsg = (req.body && req.body.message) || '';
   if (!userMsg.trim()) {
@@ -1022,29 +1340,20 @@ app.post('/api/ai/chat', async (req, res) => {
   const metrics = evaluateLoadConditionMetrics(latest);
   const history = Array.isArray(req.body.history) ? req.body.history.slice(-8) : [];
 
-  const systemPrompt = `You are the KSRCT EEE Smart Energy AI Copilot & Electrical Load Diagnostic Specialist.
-You have real-time direct access to the live ESP32 PZEM-004T telemetry stream.
-You must understand and explain the EXACT CONDITION OF THE LOAD, power factor, reactive power, electrical safety, energy efficiency, and hardware health.
+  const systemPrompt = `You are the KSRCT EEE Smart Energy AI Copilot & Electrical Load Diagnostic Specialist, developed by Prasanna, HarishKumar, Rahul, Viswanath, and Pavinkumar at KSRCT Department of EEE.
 
-LIVE ELECTRICAL TELEMETRY SNAPSHOT:
-- Hardware Device: ${deviceState.deviceId} (Status: ${deviceState.online ? 'ONLINE' : 'STANDBY/OFFLINE'})
-- Voltage: ${metrics.v} V AC (Nominal 230V, Grid Quality: ${metrics.gridStability})
-- Current: ${metrics.i} A RMS (Thermal Risk: ${metrics.thermalRisk})
-- Active Power: ${metrics.p} W
-- Power Factor: ${metrics.pf} (${metrics.category})
-- Frequency: ${metrics.f} Hz (Nominal 50.0 Hz)
-- Apparent Power: ${metrics.apparentPower} VA
-- Reactive Power: ${metrics.reactivePower} VAR
-- Total Energy Consumed: ${latest.energy || 0} kWh
-- Diagnosed Load Condition: ${metrics.condition}
-- Load Health Score: ${metrics.healthScore}/100 (Grade: ${metrics.efficiencyGrade})
+CRITICAL INSTRUCTIONS FOR EVERY USER MESSAGE:
+1. ALWAYS DIRECTLY AND THOROUGHLY ANSWER THE USER'S EXACT QUESTION FIRST.
+2. Provide varied, natural, and helpful answers tailored specifically to what the user asked. NEVER repeat a canned load condition text unless the user specifically asked for current load status.
+3. If the user asks about electrical theory, formulas, energy saving, hardware, creators, or general questions, give a rich, comprehensive answer with clear markdown headings and bullet points.
+4. If relevant to what the user asked, you can optionally reference live telemetry values (${metrics.p}W, ${metrics.v}V, ${metrics.pf} PF, ${metrics.condition}), but keep the user's question as the main focus.
+5. If the user asks about creators: Web developed by Prasanna, HarishKumar, Rahul; Hardware by Viswanath; Product by Pavinkumar; Dept of EEE - KSRCT.
 
-INSTRUCTIONS:
-1. Always reference the LIVE load condition and exact telemetry values when the user asks about the load, status, power, energy, or faults.
-2. Provide clear, professional electrical engineering insights (explain whether the load is resistive, inductive motor load, standby, or overload).
-3. Give practical advice for power factor improvement, load balancing, safety, and tariff reduction.
-4. Keep answers concise, clear, and easy to read with bullet points when relevant.
-5. If the user asks about creators: Web developed by Prasanna, HarishKumar, Rahul; Hardware by Viswanath; Product by Pavinkumar; Dept of EEE - KSRCT.`;
+CURRENT CIRCUIT TELEMETRY (Reference only if relevant):
+- Device: ${deviceState.deviceId} (${deviceState.online ? 'Online' : 'Standby'})
+- Voltage: ${metrics.v} V AC | Current: ${metrics.i} A | Power: ${metrics.p} W | PF: ${metrics.pf} (${metrics.category})
+- Frequency: ${metrics.f} Hz | S: ${metrics.apparentPower} VA | Q: ${metrics.reactivePower} VAR
+- Diagnosed Condition: ${metrics.condition} (Health: ${metrics.healthScore}/100, Grade: ${metrics.efficiencyGrade})`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -1056,10 +1365,10 @@ INSTRUCTIONS:
   ];
 
   try {
-    const reply = await callOpenRouter(messages, 0.4, 650);
+    const reply = await callOpenRouter(messages, 0.65, 750);
     return res.json({
       status: 'success',
-      provider: 'OpenRouter (openai/gpt-4o-mini)',
+      provider: 'OpenRouter AI Engine',
       reply,
       snapshot: {
         voltage: metrics.v,
@@ -1073,25 +1382,11 @@ INSTRUCTIONS:
       }
     });
   } catch (err) {
-    console.error('[AI Chat Error]:', err.message);
-    // Intelligent local fallback response
-    let fallbackReply = `⚡ **[AI Diagnostic Copilot]**\n\n`;
-    fallbackReply += `Current Live Load Condition: **${metrics.condition}**\n`;
-    fallbackReply += `• **Active Power:** ${metrics.p} W | **Voltage:** ${metrics.v} V AC\n`;
-    fallbackReply += `• **Current:** ${metrics.i} A | **Power Factor:** ${metrics.pf} (${metrics.category})\n`;
-    fallbackReply += `• **Load Health Score:** ${metrics.healthScore}/100 (${metrics.efficiencyGrade})\n\n`;
-
-    if (metrics.p < 5) {
-      fallbackReply += `Your monitored circuit is currently in **Standby or Zero Load** mode. Connect an electrical load to observe real-time dynamic waveforms and power draw.`;
-    } else if (metrics.pf < 0.85) {
-      fallbackReply += `Your circuit is drawing **inductive reactive power** (${metrics.reactivePower} VAR). Consider shunt capacitance to improve the power factor above 0.90.`;
-    } else {
-      fallbackReply += `The connected load is operating efficiently with unity/near-unity power factor and stable grid voltage.`;
-    }
-
+    console.warn('[AI Chat Fallback Triggered]:', err.message);
+    const fallbackReply = generateLocalAiResponse(userMsg, metrics, deviceState);
     return res.json({
       status: 'success',
-      provider: 'OpenRouter Local Fallback',
+      provider: 'PulseIoT Smart Energy Engine',
       fallbackNotice: err.message,
       reply: fallbackReply,
       snapshot: {
